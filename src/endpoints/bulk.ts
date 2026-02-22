@@ -52,11 +52,19 @@ export function createBulkHandler(
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
-      const { collection: targetCollection } = body as { collection?: string }
+      const { collection: targetCollection, ids } = body as {
+        collection?: string
+        ids?: Array<{ id: string; collection: string }>
+      }
 
-      const collectionsToScan = targetCollection
-        ? [targetCollection]
-        : targetCollections
+      // If specific IDs are provided, scan only those
+      const scanSpecificIds = Array.isArray(ids) && ids.length > 0
+
+      const collectionsToScan = scanSpecificIds
+        ? [...new Set(ids!.map((i) => i.collection))]
+        : targetCollection
+          ? [targetCollection]
+          : targetCollections
 
       const language = pluginConfig.language || 'fr'
       const contentField = pluginConfig.contentField || 'content'
@@ -65,14 +73,21 @@ export function createBulkHandler(
       let totalIssues = 0
 
       for (const collectionSlug of collectionsToScan) {
-        // Fetch all published documents
+        // Build IDs filter for this collection if scanning specific docs
+        const idsForCollection = scanSpecificIds
+          ? ids!.filter((i) => i.collection === collectionSlug).map((i) => i.id)
+          : null
+
+        // Fetch documents
         const allDocs = await req.payload.find({
           collection: collectionSlug,
           limit: 0, // Get all
           depth: 1,
           overrideAccess: true,
           where: {
-            _status: { equals: 'published' },
+            ...(idsForCollection
+              ? { id: { in: idsForCollection } }
+              : { _status: { equals: 'published' } }),
           },
         })
 
