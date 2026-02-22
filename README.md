@@ -50,9 +50,13 @@
 
 ### Dashboard (`/admin/spellcheck`)
 
-- **Bulk scan** — Analyze all published documents in one click
+- **Selective scan** — Check specific pages or all documents at once
+- **Checkbox selection** — Pick individual documents to scan
+- **Collection filter** — Filter by collection (pages, posts, etc.)
 - **Sortable table** — Sort by score, issues, word count, last checked
 - **Expandable rows** — Click a document to see all issues inline
+- **Before/After diff** — Visual comparison of original vs corrected text
+- **Multiple suggestions** — Dropdown to choose between alternative corrections
 - **One-click fix** — Apply corrections directly from the dashboard
 - **Summary cards** — Total documents, average score, issues count
 
