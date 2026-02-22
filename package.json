@@ -1,0 +1,103 @@
+{
+  "name": "@consilioweb/spellcheck",
+  "version": "0.1.0",
+  "description": "Payload CMS spellcheck plugin — LanguageTool + Claude AI fallback, dashboard, sidebar field, auto-check on save",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
+    },
+    "./views": {
+      "import": {
+        "types": "./dist/views.d.ts",
+        "default": "./dist/views.js"
+      },
+      "require": {
+        "types": "./dist/views.d.cts",
+        "default": "./dist/views.cjs"
+      }
+    }
+  },
+  "bin": {
+    "spellcheck-install": "./scripts/install.mjs",
+    "spellcheck-uninstall": "./scripts/uninstall.mjs"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "spellcheck",
+    "spelling",
+    "grammar",
+    "languagetool",
+    "payload",
+    "payload-cms",
+    "payload-plugin",
+    "lexical",
+    "i18n",
+    "french",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pOwn3d/payload-spellcheck.git"
+  },
+  "author": "ConsilioWEB <contact@consilioweb.fr> (https://consilioweb.fr)",
+  "license": "MIT",
+  "peerDependencies": {
+    "@payloadcms/next": "^3.0.0",
+    "@payloadcms/ui": "^3.0.0",
+    "payload": "^3.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@payloadcms/ui": {
+      "optional": true
+    },
+    "@payloadcms/next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
