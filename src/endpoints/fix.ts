@@ -17,45 +17,106 @@ interface LexicalNode {
 
 /**
  * Recursively replace text in Lexical JSON nodes.
- * Returns the number of replacements made.
+ * Only replaces the FIRST occurrence found, then stops.
+ * Uses `state` object to track whether a fix was already applied.
  */
 function applyFixToLexical(
   node: LexicalNode | LexicalNode[] | null | undefined,
   original: string,
   replacement: string,
+  state = { done: false },
 ): number {
-  if (!node) return 0
+  if (!node || state.done) return 0
 
   if (Array.isArray(node)) {
     let fixed = 0
     for (const item of node) {
-      fixed += applyFixToLexical(item, original, replacement)
+      if (state.done) break
+      fixed += applyFixToLexical(item, original, replacement, state)
     }
     return fixed
   }
 
   if (typeof node !== 'object') return 0
 
-  let fixed = 0
-
-  // Replace in text nodes
+  // Replace in text nodes — ONLY the first match
   if (node.type === 'text' && typeof node.text === 'string') {
-    if (node.text.includes(original)) {
+    if (!state.done && node.text.includes(original)) {
       node.text = node.text.replace(original, replacement)
-      fixed++
+      state.done = true
+      return 1
     }
   }
+
+  let fixed = 0
 
   // Recurse into children
   if (Array.isArray(node.children)) {
     for (const child of node.children) {
-      fixed += applyFixToLexical(child, original, replacement)
+      if (state.done) break
+      fixed += applyFixToLexical(child, original, replacement, state)
     }
   }
 
   // Handle root node
-  if (node.root) {
-    fixed += applyFixToLexical(node.root, original, replacement)
+  if (node.root && !state.done) {
+    fixed += applyFixToLexical(node.root, original, replacement, state)
+  }
+
+  return fixed
+}
+
+/**
+ * Recursively search and fix text in any object structure (blocks with nested richText/text fields).
+ * Fixes only in Lexical richText nodes. For plain text fields, replaces directly.
+ */
+function applyFixInObject(
+  obj: unknown,
+  original: string,
+  replacement: string,
+  state: { done: boolean },
+  depth = 0,
+): number {
+  if (!obj || typeof obj !== 'object' || state.done || depth > 10) return 0
+
+  let fixed = 0
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      if (state.done) break
+      fixed += applyFixInObject(item, original, replacement, state, depth + 1)
+    }
+    return fixed
+  }
+
+  const record = obj as Record<string, unknown>
+
+  for (const [key, value] of Object.entries(record)) {
+    if (state.done) break
+
+    // Lexical JSON field (has root.children)
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const v = value as Record<string, unknown>
+      if (v.root && typeof v.root === 'object') {
+        fixed += applyFixToLexical(value as LexicalNode, original, replacement, state)
+        continue
+      }
+    }
+
+    // Plain text fields (title, description, heading, quote, etc.)
+    if (typeof value === 'string' && value.includes(original)) {
+      if (['title', 'description', 'heading', 'subheading', 'quote', 'label', 'caption', 'text', 'summary'].includes(key)) {
+        record[key] = value.replace(original, replacement)
+        state.done = true
+        fixed++
+        break
+      }
+    }
+
+    // Recurse into nested objects/arrays
+    if (typeof value === 'object' && value !== null) {
+      fixed += applyFixInObject(value, original, replacement, state, depth + 1)
+    }
   }
 
   return fixed
@@ -101,25 +162,13 @@ export function createFixHandler(
       const docAny = doc as any
       let totalFixed = 0
 
-      // Fix in content field
-      if (docAny[contentField]) {
-        const content = JSON.parse(JSON.stringify(docAny[contentField]))
-        const fixed = applyFixToLexical(content, original, replacement)
-        if (fixed > 0) {
-          totalFixed += fixed
-          await req.payload.update({
-            collection,
-            id,
-            data: { [contentField]: content },
-            overrideAccess: true,
-          })
-        }
-      }
+      // Shared state to stop after first fix across all fields
+      const fixState = { done: false }
 
-      // Fix in hero richText
-      if (docAny.hero?.richText) {
+      // Fix in hero richText (check first since hero text appears first)
+      if (!fixState.done && docAny.hero?.richText) {
         const hero = JSON.parse(JSON.stringify(docAny.hero))
-        const fixed = applyFixToLexical(hero.richText, original, replacement)
+        const fixed = applyFixToLexical(hero.richText, original, replacement, fixState)
         if (fixed > 0) {
           totalFixed += fixed
           await req.payload.update({
@@ -131,21 +180,29 @@ export function createFixHandler(
         }
       }
 
+      // Fix in content field
+      if (!fixState.done && docAny[contentField]) {
+        const content = JSON.parse(JSON.stringify(docAny[contentField]))
+        const fixed = applyFixToLexical(content, original, replacement, fixState)
+        if (fixed > 0) {
+          totalFixed += fixed
+          await req.payload.update({
+            collection,
+            id,
+            data: { [contentField]: content },
+            overrideAccess: true,
+          })
+        }
+      }
+
       // Fix in layout blocks
-      if (Array.isArray(docAny.layout)) {
+      if (!fixState.done && Array.isArray(docAny.layout)) {
         const layout = JSON.parse(JSON.stringify(docAny.layout))
         let layoutFixed = 0
         for (const block of layout) {
-          if (block.richText) {
-            layoutFixed += applyFixToLexical(block, original, replacement)
-          }
-          if (Array.isArray(block.columns)) {
-            for (const col of block.columns) {
-              if (col.richText) {
-                layoutFixed += applyFixToLexical(col, original, replacement)
-              }
-            }
-          }
+          if (fixState.done) break
+          // Fix in any richText/rich_text field within the block
+          layoutFixed += applyFixInObject(block, original, replacement, fixState)
         }
         if (layoutFixed > 0) {
           totalFixed += layoutFixed

@@ -10,12 +10,35 @@ const DEFAULT_SKIP_RULES = new Set([
   'WHITESPACE_RULE',
   'COMMA_PARENTHESIS_WHITESPACE',
   'UNPAIRED_BRACKETS',
+  'UPPERCASE_SENTENCE_START',     // Headings/titles don't start with uppercase
+  'FRENCH_WHITESPACE',            // Non-breaking spaces are inconsistent in CMS
+  'MORFOLOGIK_RULE_FR_FR',        // Overly aggressive French spelling (flags proper nouns)
+  'APOS_TYP',                     // Typography apostrophe (curly vs straight)
+  'POINT_VIRGULE',                // Semicolon spacing
+  'DASH_RULE',                    // Dash types (em vs en)
 ])
 
 /** Default categories to skip */
 const DEFAULT_SKIP_CATEGORIES = new Set([
   'TYPOGRAPHY',
+  'TYPOS',  // Too many false positives with tech terms
 ])
+
+/** Patterns that indicate non-natural-language content */
+const SKIP_PATTERNS = [
+  /^https?:\/\//i,                // URLs
+  /^mailto:/i,                    // Email links
+  /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, // Emails
+  /^[A-Z][a-z]+[A-Z]/,           // CamelCase (JavaScript, TypeScript)
+  /^[A-Z]{2,}$/,                  // All caps abbreviations (API, CSS, SEO)
+  /^\d+[\d.,]*$/,                 // Numbers
+  /^\d+[a-zA-Z]+$/,              // Numbers with units (80px, 24h, mp3)
+  /^[#@]/,                        // Hashtags, mentions
+  /^[€$£¥]/,                      // Currency amounts
+  /^0[1-9]\d{8}$/,               // French phone numbers
+  /^\+?\d[\d\s.-]{8,}$/,         // International phone numbers
+  /^[a-z-]+\.[a-z]{2,}$/i,       // Domain names
+]
 
 /**
  * Filter out false positives based on plugin configuration.
@@ -35,9 +58,8 @@ export function filterFalsePositives(
   ])
 
   // Build a lowercase set of custom dictionary words
-  const dictionary = new Set(
-    (config.customDictionary || []).map((w) => w.toLowerCase()),
-  )
+  const dictionaryWords = (config.customDictionary || []).map((w) => w.toLowerCase())
+  const dictionary = new Set(dictionaryWords)
 
   return issues.filter((issue) => {
     // Skip premium rules
@@ -49,11 +71,32 @@ export function filterFalsePositives(
     // Skip configured categories
     if (skipCategories.has(issue.category)) return false
 
-    // Skip if the original word is in custom dictionary
+    // Skip if the original word is in custom dictionary (exact match)
     if (issue.original && dictionary.has(issue.original.toLowerCase())) return false
+
+    // Skip if original contains a dictionary word (partial match for compound words)
+    if (issue.original) {
+      const lower = issue.original.toLowerCase()
+      for (const word of dictionaryWords) {
+        if (lower.includes(word) || word.includes(lower)) return false
+      }
+    }
 
     // Skip single-character issues (often punctuation false positives)
     if (issue.original && issue.original.length <= 1 && issue.category !== 'GRAMMAR') return false
+
+    // Skip patterns that are not natural language
+    if (issue.original) {
+      for (const pattern of SKIP_PATTERNS) {
+        if (pattern.test(issue.original)) return false
+      }
+    }
+
+    // Skip issues where the suggestion is the same as original (LanguageTool bug)
+    if (issue.replacements.length > 0 && issue.replacements[0] === issue.original) return false
+
+    // Skip issues in very short context (likely a label or button text)
+    if (issue.context && issue.context.trim().length < 5) return false
 
     return true
   })
