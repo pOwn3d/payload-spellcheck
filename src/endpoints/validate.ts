@@ -6,55 +6,12 @@
 
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckIssue, SpellCheckResult } from '../types.js'
-import { extractTextFromLexical, countWords } from '../engine/lexicalParser.js'
+import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { checkWithClaude } from '../engine/claude.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 
-/**
- * Extract text content from a Payload document.
- * Handles both pages (layout blocks) and posts (content field).
- */
-function extractTextFromDoc(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  doc: any,
-  collection: string,
-  contentField: string,
-): string {
-  let text = ''
-
-  // Extract from title
-  if (doc.title) text += doc.title + '\n'
-
-  // Extract from hero
-  if (doc.hero?.richText) {
-    text += extractTextFromLexical(doc.hero.richText) + '\n'
-  }
-
-  // Extract from content field (posts)
-  if (doc[contentField]) {
-    text += extractTextFromLexical(doc[contentField]) + '\n'
-  }
-
-  // Extract from layout blocks (pages)
-  if (Array.isArray(doc.layout)) {
-    for (const block of doc.layout) {
-      if (block.richText) {
-        text += extractTextFromLexical(block.richText) + '\n'
-      }
-      // Content block has columns
-      if (Array.isArray(block.columns)) {
-        for (const col of block.columns) {
-          if (col.richText) {
-            text += extractTextFromLexical(col.richText) + '\n'
-          }
-        }
-      }
-    }
-  }
-
-  return text.trim()
-}
+// Text extraction is now handled by extractAllTextFromDoc from lexicalParser
 
 export function createValidateHandler(
   pluginConfig: SpellCheckPluginConfig,
@@ -94,7 +51,7 @@ export function createValidateHandler(
           depth: 1,
           overrideAccess: true,
         })
-        textToCheck = extractTextFromDoc(doc, collection, contentField)
+        textToCheck = extractAllTextFromDoc(doc, contentField)
       } else {
         return Response.json(
           { error: 'Provide { id, collection } or { text }' },

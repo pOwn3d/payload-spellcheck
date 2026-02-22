@@ -5,7 +5,7 @@
 
 import type { CollectionAfterChangeHook } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
-import { extractTextFromLexical, countWords } from '../engine/lexicalParser.js'
+import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 
@@ -19,25 +19,8 @@ export function createAfterChangeCheckHook(
         const contentField = pluginConfig.contentField || 'content'
         const language = pluginConfig.language || 'fr'
 
-        // Extract text from the document
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const docAny = doc as any
-        let text = ''
-        if (docAny.title) text += docAny.title + '\n'
-        if (docAny.hero?.richText) text += extractTextFromLexical(docAny.hero.richText) + '\n'
-        if (docAny[contentField]) text += extractTextFromLexical(docAny[contentField]) + '\n'
-        if (Array.isArray(docAny.layout)) {
-          for (const block of docAny.layout) {
-            if (block.richText) text += extractTextFromLexical(block.richText) + '\n'
-            if (Array.isArray(block.columns)) {
-              for (const col of block.columns) {
-                if (col.richText) text += extractTextFromLexical(col.richText) + '\n'
-              }
-            }
-          }
-        }
-
-        text = text.trim()
+        // Extract text from all document fields
+        const text = extractAllTextFromDoc(doc, contentField)
         if (!text) return
 
         const wordCount = countWords(text)

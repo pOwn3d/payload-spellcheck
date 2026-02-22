@@ -8,7 +8,7 @@
 
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckResult } from '../types.js'
-import { extractTextFromLexical, countWords } from '../engine/lexicalParser.js'
+import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 
@@ -18,27 +18,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/**
- * Extract text from a document (same logic as validate endpoint).
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractText(doc: any, contentField: string): string {
-  let text = ''
-  if (doc.title) text += doc.title + '\n'
-  if (doc.hero?.richText) text += extractTextFromLexical(doc.hero.richText) + '\n'
-  if (doc[contentField]) text += extractTextFromLexical(doc[contentField]) + '\n'
-  if (Array.isArray(doc.layout)) {
-    for (const block of doc.layout) {
-      if (block.richText) text += extractTextFromLexical(block.richText) + '\n'
-      if (Array.isArray(block.columns)) {
-        for (const col of block.columns) {
-          if (col.richText) text += extractTextFromLexical(col.richText) + '\n'
-        }
-      }
-    }
-  }
-  return text.trim()
-}
+// Text extraction is now handled by extractAllTextFromDoc from lexicalParser
 
 export function createBulkHandler(
   targetCollections: string[],
@@ -95,7 +75,7 @@ export function createBulkHandler(
           totalDocuments++
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const docAny = doc as any
-          const text = extractText(docAny, contentField)
+          const text = extractAllTextFromDoc(docAny, contentField)
 
           if (!text.trim()) continue
 
