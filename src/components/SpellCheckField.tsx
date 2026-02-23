@@ -1,11 +1,14 @@
 /**
  * SpellCheckField — sidebar field component for the Payload editor.
  * Shows spellcheck score + issues for the current document.
+ *
+ * After a fix or ignore, the issue is removed from the list (optimistic update)
+ * and the change is persisted to the spellcheck-results collection.
  */
 
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 // @ts-ignore — peer dependency
 import { useDocumentInfo } from '@payloadcms/ui'
 import { IssueCard } from './IssueCard.js'
@@ -89,9 +92,15 @@ const styles = {
 export const SpellCheckField: React.FC = () => {
   const { id, collectionSlug } = useDocumentInfo()
   const [result, setResult] = useState<SpellCheckResult | null>(null)
+  const [resultDbId, setResultDbId] = useState<string | number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [fixedIssues, setFixedIssues] = useState<Set<string>>(new Set())
+
+  // Refs for stable callback access
+  const resultRef = useRef(result)
+  resultRef.current = result
+  const resultDbIdRef = useRef(resultDbId)
+  resultDbIdRef.current = resultDbId
 
   // Load existing result on mount
   useEffect(() => {
@@ -101,6 +110,7 @@ export const SpellCheckField: React.FC = () => {
       .then((res) => res.json())
       .then((data) => {
         if (data.docs?.[0]) {
+          setResultDbId(data.docs[0].id)
           setResult({
             docId: String(id),
             collection: collectionSlug,
@@ -120,7 +130,6 @@ export const SpellCheckField: React.FC = () => {
 
     setLoading(true)
     setError(null)
-    setFixedIssues(new Set())
 
     try {
       const res = await fetch('/api/spellcheck/validate', {
@@ -143,6 +152,37 @@ export const SpellCheckField: React.FC = () => {
     }
   }, [id, collectionSlug, loading])
 
+  // Remove an issue from the result (optimistic UI + persist to DB)
+  const removeIssue = useCallback((matcher: { offset?: number; original?: string; ruleId?: string }) => {
+    const prev = resultRef.current
+    if (!prev) return
+
+    const updatedIssues = prev.issues.filter((issue) => {
+      if (typeof matcher.offset === 'number' && issue.offset === matcher.offset) {
+        if (matcher.original && issue.original !== matcher.original) return true
+        if (matcher.ruleId && issue.ruleId !== matcher.ruleId) return true
+        return false // Remove this issue
+      }
+      return true
+    })
+
+    const updatedCount = updatedIssues.length
+    const updatedScore = prev.wordCount > 0
+      ? Math.max(0, Math.round(100 - (updatedCount / prev.wordCount * 1000)))
+      : prev.score
+
+    setResult({ ...prev, issues: updatedIssues, issueCount: updatedCount, score: updatedScore })
+
+    // Persist to DB (fire-and-forget)
+    if (resultDbIdRef.current) {
+      fetch(`/api/spellcheck-results/${resultDbIdRef.current}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issues: updatedIssues, issueCount: updatedCount, score: updatedScore }),
+      }).catch(() => {})
+    }
+  }, [])
+
   const handleFix = useCallback(async (original: string, replacement: string, offset?: number, length?: number) => {
     if (!id || !collectionSlug) return
 
@@ -150,32 +190,16 @@ export const SpellCheckField: React.FC = () => {
       const res = await fetch('/api/spellcheck/fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id,
-          collection: collectionSlug,
-          original,
-          replacement,
-          offset,
-          length,
-        }),
+        body: JSON.stringify({ id, collection: collectionSlug, original, replacement, offset, length }),
       })
 
       if (res.ok) {
-        setFixedIssues((prev) => new Set([...prev, `${original}→${replacement}`]))
+        removeIssue({ offset, original })
       }
     } catch {
       // ignore
     }
-  }, [id, collectionSlug])
-
-  const handleIgnore = useCallback((ruleId: string) => {
-    if (!result) return
-    setResult({
-      ...result,
-      issues: result.issues.filter((i) => i.ruleId !== ruleId),
-      issueCount: result.issues.filter((i) => i.ruleId !== ruleId).length,
-    })
-  }, [result])
+  }, [id, collectionSlug, removeIssue])
 
   return (
     <div style={styles.container}>
@@ -222,8 +246,15 @@ export const SpellCheckField: React.FC = () => {
                   key={`${issue.ruleId}-${issue.offset}-${i}`}
                   issue={issue}
                   onFix={handleFix}
-                  onIgnore={handleIgnore}
-                  isFixed={fixedIssues.has(`${issue.original}→${issue.replacements[0]}`)}
+                  onIgnore={() => removeIssue({ offset: issue.offset, ruleId: issue.ruleId })}
+                  onAddToDict={(word) => {
+                    fetch('/api/spellcheck/dictionary', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ word }),
+                    }).catch(() => {})
+                    removeIssue({ offset: issue.offset, ruleId: issue.ruleId })
+                  }}
                 />
               ))}
             </div>

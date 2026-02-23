@@ -57,6 +57,8 @@ export interface SpellCheckPluginConfig {
   addSidebarField?: boolean
   /** Add dashboard view at /admin/spellcheck (default: true) */
   addDashboardView?: boolean
+  /** Add score column in collection list views (default: true) */
+  addListColumn?: boolean
   /** Base path for API endpoints (default: '/spellcheck') */
   endpointBasePath?: string
 

@@ -3,3 +3,4 @@
 export { SpellCheckField } from './components/SpellCheckField.js'
 export { SpellCheckDashboard } from './components/SpellCheckDashboard.js'
 export { IssueCard } from './components/IssueCard.js'
+export { SpellCheckScoreCell } from './components/SpellCheckScoreCell.js'

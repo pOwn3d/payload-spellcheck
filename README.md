@@ -27,6 +27,9 @@
 | **LanguageTool** | Grammar, spelling, punctuation via free API |
 | **Claude AI** | Optional semantic analysis (coherence, tone, phrasing) |
 | **Custom Dictionary** | Whitelist tech terms, brand names, proper nouns |
+| **Dynamic Dictionary** | Add/remove words from admin UI, persists in DB |
+| **Offset-based Fix** | Precise corrections using LanguageTool offsets |
+| **Ignore Issues** | Dismiss false positives (persists across reloads) |
 | **i18n** | French and English UI translations |
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
@@ -38,10 +41,12 @@
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Admin Views](#admin-views)
+- [Dynamic Dictionary](#dynamic-dictionary)
 - [API Endpoints](#api-endpoints)
 - [Engine](#engine)
 - [Package Exports](#package-exports)
 - [Uninstall](#uninstall)
+- [Changelog](#changelog)
 - [License](#license)
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
@@ -50,6 +55,7 @@
 
 ### Dashboard (`/admin/spellcheck`)
 
+- **Tabbed interface** — Results tab + Dictionary tab
 - **Selective scan** — Check specific pages or all documents at once
 - **Checkbox selection** — Pick individual documents to scan
 - **Collection filter** — Filter by collection (pages, posts, etc.)
@@ -57,7 +63,9 @@
 - **Expandable rows** — Click a document to see all issues inline
 - **Before/After diff** — Visual comparison of original vs corrected text
 - **Multiple suggestions** — Dropdown to choose between alternative corrections
-- **One-click fix** — Apply corrections directly from the dashboard
+- **One-click fix** — Apply corrections directly (issue removed from UI + DB)
+- **Ignore button** — Dismiss false positives (persists in DB across reloads)
+- **Add to dictionary** — Whitelist a word directly from an issue card
 - **Summary cards** — Total documents, average score, issues count
 
 ### Sidebar Field
@@ -88,11 +96,24 @@
 - **Cost-efficient** — Uses Claude Haiku for fast, cheap analysis
 - **Opt-in** — Disabled by default, enable via `enableAiFallback: true`
 
+### Dynamic Dictionary
+
+- **Admin UI** — Manage dictionary from the "Dictionnaire" tab in the dashboard
+- **Add words** — Single word or comma-separated bulk input
+- **Import** — Paste a list of words (one per line or comma-separated)
+- **Export** — Download all dictionary words as a `.txt` file
+- **Search & filter** — Find words in the dictionary
+- **Bulk delete** — Select and remove multiple words at once
+- **Merged sources** — Config `customDictionary` (defaults) + DB dictionary (dynamic)
+- **5-min cache** — Dictionary loaded from DB with in-memory TTL cache
+- **Auto-schema** — Plugin auto-creates missing DB columns on init (SQLite/Postgres)
+
 ### Lexical JSON Support
 
 - **Recursive extraction** — Traverses Lexical AST to extract plain text
 - **Code block skip** — Ignores code blocks (not natural language)
-- **In-place fixes** — Corrections applied directly in Lexical JSON nodes
+- **Offset-based fixes** — Precise corrections using LanguageTool offsets (v0.8.0+)
+- **Legacy fallback** — Substring search for backwards compatibility
 - **Multi-field** — Extracts from hero, content, layout blocks, columns
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
@@ -144,11 +165,12 @@ npx payload generate:importmap
 ```
 
 That's it! The plugin automatically:
-- Creates a `spellcheck-results` collection (hidden from admin nav)
-- Registers 3 API endpoints (`/api/spellcheck/validate`, `/fix`, `/bulk`)
+- Creates `spellcheck-results` and `spellcheck-dictionary` collections (hidden from admin nav)
+- Registers API endpoints (`validate`, `fix`, `bulk`, `status`, `dictionary`)
 - Adds a sidebar field to your target collections
-- Creates a dashboard view at `/admin/spellcheck`
+- Creates a dashboard view at `/admin/spellcheck` (Results + Dictionary tabs)
 - Adds an `afterChange` hook for auto-checking on save
+- Auto-fixes missing DB columns on init (SQLite/Postgres `push:true` compatibility)
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
@@ -255,8 +277,12 @@ All endpoints require authentication (Payload admin user).
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/spellcheck/validate` | `POST` | Check a single document or raw text |
-| `/api/spellcheck/fix` | `POST` | Apply a correction in Lexical JSON |
+| `/api/spellcheck/fix` | `POST` | Apply a correction in Lexical JSON (offset-based) |
 | `/api/spellcheck/bulk` | `POST` | Scan all documents (sequential, rate-limited) |
+| `/api/spellcheck/status` | `GET` | Get current bulk scan progress |
+| `/api/spellcheck/dictionary` | `GET` | List all dictionary words |
+| `/api/spellcheck/dictionary` | `POST` | Add word(s) to dictionary |
+| `/api/spellcheck/dictionary` | `DELETE` | Remove word(s) from dictionary |
 
 ### POST `/api/spellcheck/validate`
 
@@ -299,8 +325,40 @@ All endpoints require authentication (Payload admin user).
   "id": "123",
   "collection": "pages",
   "original": "une test",
-  "replacement": "un test"
+  "replacement": "un test",
+  "offset": 42,
+  "length": 8
 }
+```
+
+> `offset` and `length` enable precise offset-based targeting (v0.8.0+). Falls back to substring search if omitted.
+
+### GET `/api/spellcheck/dictionary`
+
+**Response:**
+
+```json
+{ "words": [{ "id": "1", "word": "typescript", "addedBy": { "email": "admin@example.com" }, "createdAt": "..." }], "count": 1 }
+```
+
+### POST `/api/spellcheck/dictionary`
+
+```json
+// Single word
+{ "word": "TypeScript" }
+
+// Multiple words
+{ "words": ["TypeScript", "Next.js", "Payload"] }
+```
+
+### DELETE `/api/spellcheck/dictionary`
+
+```json
+// Single
+{ "id": "abc123" }
+
+// Multiple
+{ "ids": ["abc123", "def456"] }
 ```
 
 ### POST `/api/spellcheck/bulk`
@@ -369,15 +427,18 @@ Claude issues are tagged with `source: 'claude'` and category `COHERENCE`, `TONE
 
 ## Collections
 
-The plugin auto-creates one collection:
+The plugin auto-creates two collections:
 
 | Collection | Slug | Description |
 |------------|------|-------------|
 | SpellCheck Results | `spellcheck-results` | Stores check results per document |
+| SpellCheck Dictionary | `spellcheck-dictionary` | Dynamic dictionary (one doc per word) |
 
-**Fields**: `docId`, `collection`, `title`, `slug`, `score`, `issueCount`, `wordCount`, `issues` (JSON), `lastChecked`
+**Results fields**: `docId`, `collection`, `title`, `slug`, `score`, `issueCount`, `wordCount`, `issues` (JSON), `lastChecked`
 
-The collection is hidden from the admin nav and accessible via API at `/api/spellcheck-results`.
+**Dictionary fields**: `word` (text, unique, indexed), `addedBy` (relationship to users)
+
+Both collections are hidden from the admin nav. The dictionary is managed via the Dashboard's "Dictionnaire" tab or the REST API.
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
@@ -397,6 +458,9 @@ export { extractTextFromLexical, countWords } from './engine/lexicalParser'
 export { checkWithLanguageTool } from './engine/languagetool'
 export { checkWithClaude } from './engine/claude'
 export { filterFalsePositives, calculateScore } from './engine/filters'
+
+// Dictionary cache
+export { loadDictionaryWords, invalidateDictionaryCache } from './endpoints/dictionary'
 
 // i18n
 export { getTranslations, getScoreLabel } from './i18n'
@@ -456,6 +520,35 @@ DROP INDEX IF EXISTS `spellcheck_results_collection_idx`;
 DROP INDEX IF EXISTS `spellcheck_results_last_checked_idx`;
 DROP TABLE IF EXISTS `spellcheck_results`;
 ```
+
+<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+
+## Changelog
+
+### v0.8.1
+
+- **Fix**: Corrections now remove the issue from the UI immediately (optimistic update)
+- **Fix**: "Ignorer" persists in DB across page reloads (was local state only)
+- **Fix**: Auto-fix missing DB columns on init (`push:true` compatibility for SQLite/Postgres)
+
+### v0.8.0
+
+- **New**: Dynamic dictionary — manage words from the admin dashboard (add/remove/import/export)
+- **New**: `spellcheck-dictionary` collection (one document per word, merged with config dictionary)
+- **New**: Dictionary REST API (GET/POST/DELETE at `/api/spellcheck/dictionary`)
+- **New**: Offset-based corrections — precise fix targeting using LanguageTool offsets
+- **New**: "Add to dictionary" button on issue cards (+ Dico)
+- **New**: "Ignore" button to dismiss false positives
+- **New**: Dictionary tab in the dashboard with search, bulk delete, import/export
+- **New**: In-memory cache (5-min TTL) for dictionary DB queries
+- **Changed**: `filterFalsePositives` is now async (merges config + DB dictionaries)
+- **Changed**: Fix endpoint accepts `offset` and `length` parameters (falls back to substring search)
+
+### v0.5.0 — v0.7.0
+
+- Custom dictionary config, contextual multi-word filtering, background scan
+- Lexical ghost space fix, extended French dictionary
+- Contextual offset, manual edit input, repetition filter
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
