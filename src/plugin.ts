@@ -28,6 +28,46 @@ import { createBulkHandler, createStatusHandler } from './endpoints/bulk.js'
 import { createDictionaryListHandler, createDictionaryAddHandler, createDictionaryDeleteHandler } from './endpoints/dictionary.js'
 import { createAfterChangeCheckHook } from './hooks/afterChangeCheck.js'
 
+/**
+ * Auto-fix schema issues caused by Payload's `push:true` not adding
+ * foreign key columns to `payload_locked_documents_rels` for new collections.
+ * Runs once on init — detects missing columns and adds them automatically.
+ *
+ * Works with SQLite (better-sqlite3) via raw client. For Postgres, logs
+ * a warning with the manual ALTER TABLE command.
+ */
+async function autoFixSchema(payload: any): Promise<void> {
+  try {
+    // Test if the dictionary collection is queryable
+    await payload.find({ collection: 'spellcheck-dictionary', limit: 1, overrideAccess: true })
+  } catch (e: any) {
+    const msg = String(e?.message || '')
+    if (!msg.includes('no such column') && !msg.includes('spellcheck_dictionary')) return
+
+    payload.logger.info('[spellcheck] Detected missing schema column, attempting auto-fix...')
+
+    const alterSQL = 'ALTER TABLE payload_locked_documents_rels ADD COLUMN spellcheck_dictionary_id integer'
+    const db = payload.db as any
+
+    // Find raw SQLite client (multiple paths depending on Payload/adapter version)
+    const rawClient = db.pool || db.client || db.drizzle?.session?.client
+
+    if (!rawClient?.exec) {
+      payload.logger.warn(`[spellcheck] Auto-fix: could not access raw DB client. Run manually: ${alterSQL}`)
+      return
+    }
+
+    try {
+      rawClient.exec(alterSQL)
+      payload.logger.info('[spellcheck] Auto-fixed: added spellcheck_dictionary_id to payload_locked_documents_rels')
+    } catch (fixErr: any) {
+      const fixMsg = String(fixErr?.message || '')
+      if (fixMsg.includes('duplicate column') || fixMsg.includes('already exists')) return
+      payload.logger.warn(`[spellcheck] Auto-fix failed: ${fixMsg}. Run manually: ${alterSQL}`)
+    }
+  }
+}
+
 export const spellcheckPlugin =
   (pluginConfig: SpellCheckPluginConfig = {}): Plugin =>
   (incomingConfig: Config): Config => {
@@ -72,6 +112,32 @@ export const spellcheckPlugin =
               },
             },
           ]
+        }
+
+        // Add score column in list view
+        if (pluginConfig.addListColumn !== false) {
+          updated.fields = [
+            ...(updated.fields || []),
+            {
+              name: '_spellcheckScore',
+              type: 'ui',
+              label: 'Ortho',
+              admin: {
+                components: {
+                  Cell: '@consilioweb/spellcheck/client#SpellCheckScoreCell',
+                },
+              },
+            },
+          ]
+
+          // Add to defaultColumns if defined
+          if (updated.admin?.defaultColumns) {
+            const cols = [...updated.admin.defaultColumns]
+            if (!cols.includes('_spellcheckScore')) {
+              cols.push('_spellcheckScore')
+            }
+            updated.admin = { ...updated.admin, defaultColumns: cols }
+          }
         }
 
         return updated
@@ -135,6 +201,13 @@ export const spellcheckPlugin =
         Component: '@consilioweb/spellcheck/views#SpellCheckView',
         path: '/spellcheck',
       }
+    }
+
+    // 5. Add onInit hook to auto-fix schema (push:true missing columns)
+    const existingOnInit = config.onInit
+    config.onInit = async (payload) => {
+      if (existingOnInit) await existingOnInit(payload)
+      await autoFixSchema(payload)
     }
 
     return config

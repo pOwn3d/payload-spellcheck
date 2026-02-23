@@ -6,7 +6,7 @@
 
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
 
@@ -216,6 +216,10 @@ export const SpellCheckDashboard: React.FC = () => {
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('')
 
+  // Ref for stable access to results in callbacks
+  const resultsRef = useRef(results)
+  resultsRef.current = results
+
   // Load stored results
   const loadResults = useCallback(async () => {
     setLoading(true)
@@ -395,7 +399,48 @@ export const SpellCheckDashboard: React.FC = () => {
     }
   }, [scanning, selectedIds])
 
-  // Fix issue
+  // Remove an issue from stored results (optimistic UI + persist to DB)
+  const removeIssueFromResults = useCallback((
+    docId: string,
+    collection: string,
+    issueIdentifier: { offset?: number; original?: string; ruleId?: string },
+  ) => {
+    const target = resultsRef.current.find(
+      (r) => r.docId === docId && r.collection === collection,
+    )
+    if (!target) return
+
+    const updatedIssues = target.issues.filter((issue) => {
+      if (typeof issueIdentifier.offset !== 'number') return true
+      if (issue.offset !== issueIdentifier.offset) return true
+      // Same offset — confirm with secondary field if available
+      if (issueIdentifier.original && issue.original !== issueIdentifier.original) return true
+      if (issueIdentifier.ruleId && issue.ruleId !== issueIdentifier.ruleId) return true
+      return false // Remove this issue
+    })
+
+    const updatedCount = updatedIssues.length
+    const updatedScore = target.wordCount > 0
+      ? Math.max(0, Math.round(100 - (updatedCount / target.wordCount * 1000)))
+      : target.score
+
+    // Optimistic UI update
+    setResults((prev) => prev.map((r) => {
+      if (r.id !== target.id) return r
+      return { ...r, issues: updatedIssues, issueCount: updatedCount, score: updatedScore }
+    }))
+
+    // Persist to DB (fire-and-forget)
+    if (target.id) {
+      fetch(`/api/spellcheck-results/${target.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issues: updatedIssues, issueCount: updatedCount, score: updatedScore }),
+      }).catch(() => {})
+    }
+  }, [])
+
+  // Fix issue — apply correction then remove from UI + DB
   const handleFix = useCallback(async (
     docId: string,
     collection: string,
@@ -411,19 +456,22 @@ export const SpellCheckDashboard: React.FC = () => {
         body: JSON.stringify({ id: docId, collection, original, replacement, offset, length }),
       })
       if (res.ok) {
-        await loadResults()
+        removeIssueFromResults(docId, collection, { offset, original })
       }
     } catch {
       // ignore
     }
-  }, [loadResults])
+  }, [removeIssueFromResults])
 
-  // Ignore issue — hides matching ruleId from the expanded result (local state only)
-  const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set())
-
-  const handleIgnore = useCallback((docKey: string, ruleId: string, offset: number) => {
-    setIgnoredIssues((prev) => new Set([...prev, `${docKey}:${ruleId}:${offset}`]))
-  }, [])
+  // Ignore issue — remove from UI + persist in DB
+  const handleIgnore = useCallback((
+    docId: string,
+    collection: string,
+    ruleId: string,
+    offset: number,
+  ) => {
+    removeIssueFromResults(docId, collection, { offset, ruleId })
+  }, [removeIssueFromResults])
 
   // Add word to dictionary (from IssueCard)
   const handleAddToDict = useCallback(async (word: string) => {
@@ -630,6 +678,11 @@ export const SpellCheckDashboard: React.FC = () => {
     return sortDir === 'asc' ? ' ↑' : ' ↓'
   }
 
+  // Docs with errors (issueCount > 0 and already scanned)
+  const docsWithErrors = React.useMemo(() => {
+    return filteredMergedDocs.filter((d) => d.issueCount > 0 && d.lastChecked)
+  }, [filteredMergedDocs])
+
   const handleToggleSelectAll = () => {
     if (selectedIds.size === filteredMergedDocs.length && filteredMergedDocs.length > 0) {
       setSelectedIds(new Set())
@@ -637,6 +690,42 @@ export const SpellCheckDashboard: React.FC = () => {
       setSelectedIds(new Set(filteredMergedDocs.map((d) => `${d.collection}:${d.docId}`)))
     }
   }
+
+  // Select only docs with errors and scan them
+  const handleScanErrors = useCallback(() => {
+    if (scanning || docsWithErrors.length === 0) return
+    const errorIds = new Set(docsWithErrors.map((d) => `${d.collection}:${d.docId}`))
+    setSelectedIds(errorIds)
+    // Need to trigger scan after state update — use setTimeout
+    setTimeout(() => {
+      setScanning(true)
+      setScanCurrent(0)
+      setScanTotal(0)
+      setScanProgress('Démarrage de l\'analyse des pages avec erreurs...')
+
+      const idsToScan = docsWithErrors.map((d) => ({ id: d.docId, collection: d.collection }))
+
+      fetch('/api/spellcheck/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: idsToScan }),
+      })
+        .then((res) => {
+          if (res.ok) {
+            setScanProgress(`Analyse en cours... 0/${idsToScan.length} — démarrage`)
+          } else if (res.status === 409) {
+            setScanProgress('Une analyse est déjà en cours...')
+          } else {
+            setScanProgress('Erreur lors du lancement')
+            setScanning(false)
+          }
+        })
+        .catch(() => {
+          setScanProgress('Erreur réseau')
+          setScanning(false)
+        })
+    }, 0)
+  }, [scanning, docsWithErrors])
 
   // Dictionary: filtered words
   const filteredDictWords = React.useMemo(() => {
@@ -663,7 +752,7 @@ export const SpellCheckDashboard: React.FC = () => {
           </p>
         </div>
         {activeTab === 'results' && (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' as const }}>
             {selectedIds.size > 0 && (
               <button
                 type="button"
@@ -676,6 +765,20 @@ export const SpellCheckDashboard: React.FC = () => {
                 disabled={scanning}
               >
                 {scanning ? 'Analyse...' : `Scanner (${selectedIds.size})`}
+              </button>
+            )}
+            {docsWithErrors.length > 0 && selectedIds.size === 0 && (
+              <button
+                type="button"
+                style={{
+                  ...styles.scanBtn,
+                  backgroundColor: 'var(--theme-error-500)',
+                  ...(scanning ? styles.scanBtnDisabled : {}),
+                }}
+                onClick={handleScanErrors}
+                disabled={scanning}
+              >
+                {scanning ? 'Analyse...' : `Rescanner erreurs (${docsWithErrors.length})`}
               </button>
             )}
             <button
@@ -889,16 +992,14 @@ export const SpellCheckDashboard: React.FC = () => {
                       {expandedId === rowKey && r.issues && r.issues.length > 0 && (
                         <tr>
                           <td colSpan={7} style={styles.expandedRow}>
-                            {(r.issues as SpellCheckIssue[])
-                              .filter((issue) => !ignoredIssues.has(`${rowKey}:${issue.ruleId}:${issue.offset}`))
-                              .map((issue, i) => (
+                            {(r.issues as SpellCheckIssue[]).map((issue, i) => (
                               <IssueCard
                                 key={`${issue.ruleId}-${issue.offset}-${i}`}
                                 issue={issue}
                                 onFix={(original, replacement, offset, length) =>
                                   handleFix(r.docId, r.collection, original, replacement, offset, length)
                                 }
-                                onIgnore={() => handleIgnore(rowKey, issue.ruleId, issue.offset)}
+                                onIgnore={() => handleIgnore(r.docId, r.collection, issue.ruleId, issue.offset)}
                                 onAddToDict={handleAddToDict}
                               />
                             ))}
