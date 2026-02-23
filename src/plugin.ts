@@ -21,9 +21,11 @@
 import type { Config, Plugin } from 'payload'
 import type { SpellCheckPluginConfig } from './types.js'
 import { createSpellCheckResultsCollection } from './collections/SpellCheckResults.js'
+import { createSpellCheckDictionaryCollection } from './collections/SpellCheckDictionary.js'
 import { createValidateHandler } from './endpoints/validate.js'
 import { createFixHandler } from './endpoints/fix.js'
-import { createBulkHandler } from './endpoints/bulk.js'
+import { createBulkHandler, createStatusHandler } from './endpoints/bulk.js'
+import { createDictionaryListHandler, createDictionaryAddHandler, createDictionaryDeleteHandler } from './endpoints/dictionary.js'
 import { createAfterChangeCheckHook } from './hooks/afterChangeCheck.js'
 
 export const spellcheckPlugin =
@@ -76,10 +78,11 @@ export const spellcheckPlugin =
       })
     }
 
-    // 2. Add SpellCheckResults collection
+    // 2. Add SpellCheckResults + SpellCheckDictionary collections
     config.collections = [
       ...(config.collections || []),
       createSpellCheckResultsCollection(),
+      createSpellCheckDictionaryCollection(),
     ]
 
     // 3. Add API endpoints
@@ -99,6 +102,26 @@ export const spellcheckPlugin =
         path: `${basePath}/bulk`,
         method: 'post' as const,
         handler: createBulkHandler(targetCollections, pluginConfig),
+      },
+      {
+        path: `${basePath}/status`,
+        method: 'get' as const,
+        handler: createStatusHandler(),
+      },
+      {
+        path: `${basePath}/dictionary`,
+        method: 'get' as const,
+        handler: createDictionaryListHandler(),
+      },
+      {
+        path: `${basePath}/dictionary`,
+        method: 'post' as const,
+        handler: createDictionaryAddHandler(),
+      },
+      {
+        path: `${basePath}/dictionary`,
+        method: 'delete' as const,
+        handler: createDictionaryDeleteHandler(),
       },
     ]
 

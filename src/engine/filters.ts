@@ -4,6 +4,7 @@
  */
 
 import type { SpellCheckIssue, SpellCheckPluginConfig } from '../types.js'
+import { loadDictionaryWords } from '../endpoints/dictionary.js'
 
 /** Default rules to skip (common false positives for web content) */
 const DEFAULT_SKIP_RULES = new Set([
@@ -16,12 +17,21 @@ const DEFAULT_SKIP_RULES = new Set([
   'APOS_TYP',                     // Typography apostrophe (curly vs straight)
   'POINT_VIRGULE',                // Semicolon spacing
   'DASH_RULE',                    // Dash types (em vs en)
+  'FRENCH_WORD_REPEAT_RULE',      // Repetitions from heading+body extraction
+  'MOT_TRAIT_MOT',                // Hyphenated English tech terms (mobile-first, utility-first)
+  'PAS_DE_TRAIT_UNION',           // Prefix hyphenation (multi-appareils)
 ])
 
-/** Default categories to skip */
+/** Default categories to skip (English + French LanguageTool category IDs) */
 const DEFAULT_SKIP_CATEGORIES = new Set([
+  // English categories
   'TYPOGRAPHY',
-  'TYPOS',  // Too many false positives with tech terms
+  'TYPOS',
+  'STYLE',
+  // French categories (LanguageTool uses different IDs for French)
+  'CAT_TYPOGRAPHIE',              // French typography rules
+  'REPETITIONS_STYLE',            // French style/repetition suggestions
+  'CAT_REGLES_DE_BASE',           // French basic rules (word repetition from CMS extraction)
 ])
 
 /** Patterns that indicate non-natural-language content */
@@ -42,11 +52,13 @@ const SKIP_PATTERNS = [
 
 /**
  * Filter out false positives based on plugin configuration.
+ * Merges hardcoded customDictionary with dynamic DB dictionary words.
  */
-export function filterFalsePositives(
+export async function filterFalsePositives(
   issues: SpellCheckIssue[],
   config: SpellCheckPluginConfig,
-): SpellCheckIssue[] {
+  payload?: { find: Function },
+): Promise<SpellCheckIssue[]> {
   const skipRules = new Set([
     ...DEFAULT_SKIP_RULES,
     ...(config.skipRules || []),
@@ -57,8 +69,10 @@ export function filterFalsePositives(
     ...(config.skipCategories || []),
   ])
 
-  // Build a lowercase set of custom dictionary words
-  const dictionaryWords = (config.customDictionary || []).map((w) => w.toLowerCase())
+  // Merge hardcoded config dictionary + dynamic DB dictionary
+  const configWords = (config.customDictionary || []).map((w) => w.toLowerCase())
+  const dbWords = payload ? await loadDictionaryWords(payload) : []
+  const dictionaryWords = [...new Set([...configWords, ...dbWords])]
   const dictionary = new Set(dictionaryWords)
 
   return issues.filter((issue) => {
@@ -79,6 +93,17 @@ export function filterFalsePositives(
       const lower = issue.original.toLowerCase()
       for (const word of dictionaryWords) {
         if (lower.includes(word) || word.includes(lower)) return false
+      }
+    }
+
+    // Skip if the context contains a multi-word dictionary phrase (e.g. "variable fonts", "media query")
+    // This catches cases where LanguageTool flags French grammar around English compound terms
+    if (issue.context) {
+      const ctxLower = issue.context.toLowerCase()
+      for (const word of dictionaryWords) {
+        if (word.includes(' ') && ctxLower.includes(word)) {
+          return false
+        }
       }
     }
 
