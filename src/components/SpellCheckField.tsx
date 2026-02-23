@@ -143,7 +143,7 @@ export const SpellCheckField: React.FC = () => {
     }
   }, [id, collectionSlug, loading])
 
-  const handleFix = useCallback(async (original: string, replacement: string) => {
+  const handleFix = useCallback(async (original: string, replacement: string, offset?: number, length?: number) => {
     if (!id || !collectionSlug) return
 
     try {
@@ -155,6 +155,8 @@ export const SpellCheckField: React.FC = () => {
           collection: collectionSlug,
           original,
           replacement,
+          offset,
+          length,
         }),
       })
 

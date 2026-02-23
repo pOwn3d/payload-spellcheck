@@ -25,7 +25,7 @@ export function createAfterChangeCheckHook(
 
         const wordCount = countWords(text)
         let issues = await checkWithLanguageTool(text, language, pluginConfig)
-        issues = filterFalsePositives(issues, pluginConfig)
+        issues = await filterFalsePositives(issues, pluginConfig, req.payload)
         const score = calculateScore(wordCount, issues.length)
 
         const collectionSlug = typeof collection === 'string'

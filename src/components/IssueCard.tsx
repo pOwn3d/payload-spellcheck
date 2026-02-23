@@ -7,8 +7,9 @@ import type { SpellCheckIssue } from '../types.js'
 
 interface IssueCardProps {
   issue: SpellCheckIssue
-  onFix?: (original: string, replacement: string) => void
+  onFix?: (original: string, replacement: string, offset: number, length: number) => void
   onIgnore?: (ruleId: string) => void
+  onAddToDict?: (word: string) => void
   isFixed?: boolean
 }
 
@@ -135,12 +136,14 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   issue,
   onFix,
   onIgnore,
+  onAddToDict,
   isFixed = false,
 }) => {
   const [showDiff, setShowDiff] = useState(false)
   const [selectedReplacement, setSelectedReplacement] = useState(0)
   const [manualEdit, setManualEdit] = useState(false)
   const [manualValue, setManualValue] = useState('')
+  const [addedToDict, setAddedToDict] = useState(false)
 
   // Use contextOffset from LanguageTool for accurate positioning
   const getContextIdx = (ctx: string, original: string): number => {
@@ -295,10 +298,28 @@ export const IssueCard: React.FC<IssueCardProps> = ({
           <button
             type="button"
             style={styles.btnFix}
-            onClick={() => onFix(issue.original, currentReplacement)}
+            onClick={() => onFix(issue.original, currentReplacement, issue.offset, issue.length)}
           >
             Corriger
           </button>
+        )}
+        {onAddToDict && !isFixed && !addedToDict && issue.original && (
+          <button
+            type="button"
+            style={{ ...styles.btn, fontSize: '10px' }}
+            onClick={() => {
+              onAddToDict(issue.original)
+              setAddedToDict(true)
+            }}
+            title="Ajouter au dictionnaire"
+          >
+            + Dico
+          </button>
+        )}
+        {addedToDict && (
+          <span style={{ fontSize: '11px', color: 'var(--theme-success-500)' }}>
+            Ajouté au dico
+          </span>
         )}
         {onIgnore && !isFixed && (
           <button

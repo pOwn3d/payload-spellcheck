@@ -70,8 +70,8 @@ export function createValidateHandler(
         issues = [...issues, ...claudeIssues]
       }
 
-      // Filter false positives
-      issues = filterFalsePositives(issues, pluginConfig)
+      // Filter false positives (async — loads dynamic dictionary from DB)
+      issues = await filterFalsePositives(issues, pluginConfig, req.payload)
       const score = calculateScore(wordCount, issues.length)
 
       // Store result if we have a doc ID

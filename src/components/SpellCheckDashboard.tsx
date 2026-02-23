@@ -1,6 +1,7 @@
 /**
  * SpellCheckDashboard — main admin dashboard for bulk spellcheck.
- * Shows table of all documents with scores, issues, and scan controls.
+ * Tab 1: Results table with scores, issues, and scan controls.
+ * Tab 2: Dynamic dictionary management (add/remove/import/export).
  */
 
 'use client'
@@ -20,6 +21,13 @@ interface StoredResult {
   wordCount: number
   issues: SpellCheckIssue[]
   lastChecked: string
+}
+
+interface DictionaryWord {
+  id: string
+  word: string
+  addedBy?: { id: string; email?: string; name?: string } | string | null
+  createdAt?: string
 }
 
 const styles = {
@@ -159,12 +167,32 @@ const styles = {
     textDecoration: 'none',
     fontWeight: 500,
   } as React.CSSProperties,
+  // Tab styles
+  tabs: {
+    display: 'flex',
+    gap: '0',
+    marginBottom: '24px',
+    borderBottom: '2px solid var(--theme-elevation-150)',
+  } as React.CSSProperties,
+  tab: (active: boolean) => ({
+    padding: '10px 20px',
+    fontSize: '14px',
+    fontWeight: active ? 600 : 400,
+    color: active ? 'var(--theme-text)' : 'var(--theme-elevation-500)',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderBottom: active ? '2px solid var(--theme-text)' : '2px solid transparent',
+    marginBottom: '-2px',
+    cursor: 'pointer',
+  }) as React.CSSProperties,
 }
 
 type SortKey = 'title' | 'score' | 'issueCount' | 'wordCount' | 'lastChecked'
 type SortDir = 'asc' | 'desc'
+type TabId = 'results' | 'dictionary'
 
 export const SpellCheckDashboard: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<TabId>('results')
   const [results, setResults] = useState<StoredResult[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
@@ -177,6 +205,16 @@ export const SpellCheckDashboard: React.FC = () => {
   const [filterCollection, setFilterCollection] = useState<string>('')
   const [allDocs, setAllDocs] = useState<Array<{ id: string; collection: string; title: string; slug: string }>>([])
   const [loadingDocs, setLoadingDocs] = useState(true)
+
+  // Dictionary state
+  const [dictWords, setDictWords] = useState<DictionaryWord[]>([])
+  const [dictLoading, setDictLoading] = useState(false)
+  const [dictSearch, setDictSearch] = useState('')
+  const [dictInput, setDictInput] = useState('')
+  const [dictSelectedIds, setDictSelectedIds] = useState<Set<string>>(new Set())
+  const [dictToast, setDictToast] = useState('')
+  const [showImport, setShowImport] = useState(false)
+  const [importText, setImportText] = useState('')
 
   // Load stored results
   const loadResults = useCallback(async () => {
@@ -196,7 +234,7 @@ export const SpellCheckDashboard: React.FC = () => {
   const loadAllDocs = useCallback(async () => {
     setLoadingDocs(true)
     try {
-      const collections = ['pages', 'posts'] // Will be overridden by results
+      const collections = ['pages', 'posts']
       const docs: typeof allDocs = []
       for (const col of collections) {
         try {
@@ -220,7 +258,35 @@ export const SpellCheckDashboard: React.FC = () => {
     }
   }, [])
 
+  // Load dictionary words
+  const loadDictionary = useCallback(async () => {
+    setDictLoading(true)
+    try {
+      const res = await fetch('/api/spellcheck/dictionary')
+      const data = await res.json()
+      setDictWords(data.words || [])
+    } catch {
+      // ignore
+    } finally {
+      setDictLoading(false)
+    }
+  }, [])
+
   useEffect(() => { loadResults(); loadAllDocs() }, [loadResults, loadAllDocs])
+
+  // Load dictionary when switching to tab
+  useEffect(() => {
+    if (activeTab === 'dictionary') {
+      loadDictionary()
+    }
+  }, [activeTab, loadDictionary])
+
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (!dictToast) return
+    const t = setTimeout(() => setDictToast(''), 3000)
+    return () => clearTimeout(t)
+  }, [dictToast])
 
   // Toggle selection
   const toggleSelect = useCallback((docId: string, collection: string) => {
@@ -232,20 +298,74 @@ export const SpellCheckDashboard: React.FC = () => {
     })
   }, [])
 
-  const toggleSelectAll = useCallback(() => {
-    const filtered = filteredMergedDocs
-    if (selectedIds.size === filtered.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filtered.map((d) => `${d.collection}:${d.docId}`)))
-    }
-  }, [selectedIds.size])
+  const [scanCurrent, setScanCurrent] = useState(0)
+  const [scanTotal, setScanTotal] = useState(0)
+  const [scanCurrentDoc, setScanCurrentDoc] = useState('')
+
+  // Poll scan status every 2 seconds while scanning
+  useEffect(() => {
+    if (!scanning) return
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/spellcheck/status')
+        if (!res.ok) return
+        const data = await res.json()
+
+        if (data.status === 'running') {
+          setScanCurrent(data.current || 0)
+          setScanTotal(data.total || 0)
+          setScanCurrentDoc(data.currentDoc || '')
+          setScanProgress(
+            `Analyse en cours... ${data.current}/${data.total} — ${data.currentDoc || ''}`,
+          )
+        } else if (data.status === 'completed') {
+          setScanProgress(
+            `Terminé — ${data.totalDocuments} documents, ${data.totalIssues} problèmes, score moyen ${data.averageScore}`,
+          )
+          setScanning(false)
+          setScanCurrent(0)
+          setScanTotal(0)
+          setScanCurrentDoc('')
+          loadResults()
+        } else if (data.status === 'error') {
+          setScanProgress(`Erreur : ${data.error || 'Erreur inconnue'}`)
+          setScanning(false)
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [scanning, loadResults])
+
+  // Check if a scan is already running on mount
+  useEffect(() => {
+    fetch('/api/spellcheck/status')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status === 'running') {
+          setScanning(true)
+          setScanCurrent(data.current || 0)
+          setScanTotal(data.total || 0)
+          setScanCurrentDoc(data.currentDoc || '')
+          setScanProgress(
+            `Analyse en cours... ${data.current}/${data.total} — ${data.currentDoc || ''}`,
+          )
+        }
+      })
+      .catch(() => { /* ignore */ })
+  }, [])
 
   // Bulk scan (all or selected)
   const handleScan = useCallback(async (onlySelected = false) => {
     if (scanning) return
     setScanning(true)
     setSelectedIds(new Set())
+    setScanCurrent(0)
+    setScanTotal(0)
+    setScanProgress('Démarrage de l\'analyse...')
 
     const idsToScan = onlySelected
       ? [...selectedIds].map((key) => {
@@ -253,9 +373,6 @@ export const SpellCheckDashboard: React.FC = () => {
           return { id, collection }
         })
       : undefined
-
-    const label = onlySelected ? `${idsToScan!.length} document(s)` : 'tous les documents'
-    setScanProgress(`Analyse de ${label} en cours...`)
 
     try {
       const res = await fetch('/api/spellcheck/bulk', {
@@ -265,20 +382,18 @@ export const SpellCheckDashboard: React.FC = () => {
       })
 
       if (res.ok) {
-        const data = await res.json()
-        setScanProgress(
-          `Terminé — ${data.totalDocuments} documents, ${data.totalIssues} problèmes, score moyen ${data.averageScore}`,
-        )
-        await loadResults()
+        setScanProgress('Analyse en cours... 0/? — démarrage')
+      } else if (res.status === 409) {
+        setScanProgress('Une analyse est déjà en cours...')
       } else {
-        setScanProgress('Erreur lors de l\'analyse')
+        setScanProgress('Erreur lors du lancement de l\'analyse')
+        setScanning(false)
       }
     } catch {
       setScanProgress('Erreur réseau')
-    } finally {
       setScanning(false)
     }
-  }, [scanning, loadResults, selectedIds])
+  }, [scanning, selectedIds])
 
   // Fix issue
   const handleFix = useCallback(async (
@@ -286,21 +401,126 @@ export const SpellCheckDashboard: React.FC = () => {
     collection: string,
     original: string,
     replacement: string,
+    offset?: number,
+    length?: number,
   ) => {
     try {
       const res = await fetch('/api/spellcheck/fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: docId, collection, original, replacement }),
+        body: JSON.stringify({ id: docId, collection, original, replacement, offset, length }),
       })
       if (res.ok) {
-        // Reload to reflect fix
         await loadResults()
       }
     } catch {
       // ignore
     }
   }, [loadResults])
+
+  // Ignore issue — hides matching ruleId from the expanded result (local state only)
+  const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set())
+
+  const handleIgnore = useCallback((docKey: string, ruleId: string, offset: number) => {
+    setIgnoredIssues((prev) => new Set([...prev, `${docKey}:${ruleId}:${offset}`]))
+  }, [])
+
+  // Add word to dictionary (from IssueCard)
+  const handleAddToDict = useCallback(async (word: string) => {
+    try {
+      const res = await fetch('/api/spellcheck/dictionary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word }),
+      })
+      if (res.ok) {
+        setDictToast(`"${word}" ajouté au dictionnaire`)
+        // Reload dictionary if on that tab
+        if (activeTab === 'dictionary') loadDictionary()
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeTab, loadDictionary])
+
+  // Dictionary: add word(s)
+  const handleDictAdd = useCallback(async () => {
+    if (!dictInput.trim()) return
+    // Support comma, semicolon, or newline separated
+    const words = dictInput.split(/[,;\n]+/).map((w) => w.trim()).filter(Boolean)
+    if (words.length === 0) return
+
+    try {
+      const res = await fetch('/api/spellcheck/dictionary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ words }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setDictToast(`${data.count} mot(s) ajouté(s)${data.skipped.length > 0 ? `, ${data.skipped.length} doublon(s)` : ''}`)
+        setDictInput('')
+        loadDictionary()
+      }
+    } catch {
+      setDictToast('Erreur lors de l\'ajout')
+    }
+  }, [dictInput, loadDictionary])
+
+  // Dictionary: delete word(s)
+  const handleDictDelete = useCallback(async (ids: string[]) => {
+    try {
+      const res = await fetch('/api/spellcheck/dictionary', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setDictToast(`${data.deleted} mot(s) supprimé(s)`)
+        setDictSelectedIds(new Set())
+        loadDictionary()
+      }
+    } catch {
+      setDictToast('Erreur lors de la suppression')
+    }
+  }, [loadDictionary])
+
+  // Dictionary: import
+  const handleDictImport = useCallback(async () => {
+    const words = importText.split(/[,;\n]+/).map((w) => w.trim()).filter(Boolean)
+    if (words.length === 0) return
+
+    try {
+      const res = await fetch('/api/spellcheck/dictionary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ words }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setDictToast(`${data.count} mot(s) importé(s)${data.skipped.length > 0 ? `, ${data.skipped.length} doublon(s)` : ''}`)
+        setImportText('')
+        setShowImport(false)
+        loadDictionary()
+      }
+    } catch {
+      setDictToast('Erreur lors de l\'import')
+    }
+  }, [importText, loadDictionary])
+
+  // Dictionary: export
+  const handleDictExport = useCallback(() => {
+    const content = dictWords.map((w) => w.word).join('\n')
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'spellcheck-dictionary.txt'
+    a.click()
+    URL.revokeObjectURL(url)
+    setDictToast('Dictionnaire exporté')
+  }, [dictWords])
 
   // Sort
   const handleSort = (key: SortKey) => {
@@ -334,7 +554,6 @@ export const SpellCheckDashboard: React.FC = () => {
     const seen = new Set<string>()
     const merged: MergedDoc[] = []
 
-    // Add all known docs (from API)
     for (const doc of allDocs) {
       const key = `${doc.collection}:${doc.id}`
       seen.add(key)
@@ -353,7 +572,6 @@ export const SpellCheckDashboard: React.FC = () => {
       })
     }
 
-    // Add results that weren't in allDocs (e.g. draft or deleted)
     for (const r of results) {
       const key = `${r.collection}:${r.docId}`
       if (!seen.has(key)) {
@@ -375,19 +593,16 @@ export const SpellCheckDashboard: React.FC = () => {
     return merged
   }, [results, allDocs])
 
-  // Available collections for filter
   const collections = React.useMemo(() => {
     return [...new Set(mergedDocs.map((d) => d.collection))].sort()
   }, [mergedDocs])
 
-  // Filter by collection
   const filteredMergedDocs = React.useMemo(() => {
     return filterCollection
       ? mergedDocs.filter((d) => d.collection === filterCollection)
       : mergedDocs
   }, [mergedDocs, filterCollection])
 
-  // Sort
   const sortedResults = [...filteredMergedDocs].sort((a, b) => {
     const dir = sortDir === 'asc' ? 1 : -1
     switch (sortKey) {
@@ -415,13 +630,26 @@ export const SpellCheckDashboard: React.FC = () => {
     return sortDir === 'asc' ? ' ↑' : ' ↓'
   }
 
-  // Workaround: toggleSelectAll needs access to filteredMergedDocs
-  // Redefine it after filteredMergedDocs is computed
   const handleToggleSelectAll = () => {
     if (selectedIds.size === filteredMergedDocs.length && filteredMergedDocs.length > 0) {
       setSelectedIds(new Set())
     } else {
       setSelectedIds(new Set(filteredMergedDocs.map((d) => `${d.collection}:${d.docId}`)))
+    }
+  }
+
+  // Dictionary: filtered words
+  const filteredDictWords = React.useMemo(() => {
+    if (!dictSearch.trim()) return dictWords
+    const q = dictSearch.toLowerCase()
+    return dictWords.filter((w) => w.word.toLowerCase().includes(q))
+  }, [dictWords, dictSearch])
+
+  const handleDictToggleSelectAll = () => {
+    if (dictSelectedIds.size === filteredDictWords.length && filteredDictWords.length > 0) {
+      setDictSelectedIds(new Set())
+    } else {
+      setDictSelectedIds(new Set(filteredDictWords.map((w) => w.id)))
     }
   }
 
@@ -434,205 +662,497 @@ export const SpellCheckDashboard: React.FC = () => {
             Analyse orthographique et grammaticale du contenu via LanguageTool
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {selectedIds.size > 0 && (
+        {activeTab === 'results' && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                style={{
+                  ...styles.scanBtn,
+                  backgroundColor: 'var(--theme-success-500)',
+                  ...(scanning ? styles.scanBtnDisabled : {}),
+                }}
+                onClick={() => handleScan(true)}
+                disabled={scanning}
+              >
+                {scanning ? 'Analyse...' : `Scanner (${selectedIds.size})`}
+              </button>
+            )}
             <button
               type="button"
               style={{
                 ...styles.scanBtn,
-                backgroundColor: 'var(--theme-success-500)',
                 ...(scanning ? styles.scanBtnDisabled : {}),
               }}
-              onClick={() => handleScan(true)}
+              onClick={() => handleScan(false)}
               disabled={scanning}
             >
-              {scanning ? 'Analyse...' : `Scanner (${selectedIds.size})`}
+              {scanning ? 'Analyse...' : 'Scanner tout'}
             </button>
-          )}
-          <button
-            type="button"
-            style={{
-              ...styles.scanBtn,
-              ...(scanning ? styles.scanBtnDisabled : {}),
-            }}
-            onClick={() => handleScan(false)}
-            disabled={scanning}
-          >
-            {scanning ? 'Analyse...' : 'Scanner tout'}
-          </button>
-        </div>
-      </div>
-
-      {/* Filter bar */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' as const }}>
-        {collections.length > 1 && (
-          <select
-            value={filterCollection}
-            onChange={(e) => { setFilterCollection(e.target.value); setSelectedIds(new Set()) }}
-            style={{
-              padding: '6px 10px',
-              fontSize: '13px',
-              border: '1px solid var(--theme-elevation-200)',
-              borderRadius: '4px',
-              backgroundColor: 'var(--theme-elevation-0)',
-              color: 'var(--theme-text)',
-            }}
-          >
-            <option value="">Toutes les collections</option>
-            {collections.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          </div>
         )}
-        <span style={{ fontSize: '12px', color: 'var(--theme-elevation-500)' }}>
-          {filteredMergedDocs.length} document(s)
-          {selectedIds.size > 0 && ` — ${selectedIds.size} sélectionné(s)`}
-        </span>
       </div>
 
-      {scanProgress && (
-        <div style={styles.progress}>{scanProgress}</div>
+      {/* Tabs */}
+      <div style={styles.tabs}>
+        <button
+          type="button"
+          style={styles.tab(activeTab === 'results')}
+          onClick={() => setActiveTab('results')}
+        >
+          Résultats
+        </button>
+        <button
+          type="button"
+          style={styles.tab(activeTab === 'dictionary')}
+          onClick={() => setActiveTab('dictionary')}
+        >
+          Dictionnaire {dictWords.length > 0 && `(${dictWords.length})`}
+        </button>
+      </div>
+
+      {/* Toast notification */}
+      {dictToast && (
+        <div style={{
+          padding: '8px 16px',
+          marginBottom: '16px',
+          borderRadius: '4px',
+          backgroundColor: 'var(--theme-success-100, #dcfce7)',
+          border: '1px solid var(--theme-success-500)',
+          color: 'var(--theme-success-700, #15803d)',
+          fontSize: '13px',
+        }}>
+          {dictToast}
+        </div>
       )}
 
-      {results.length > 0 && (
-        <div style={styles.summary}>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryLabel}>Documents</div>
-            <div style={styles.summaryValue}>{results.length}</div>
+      {/* ===== TAB: Results ===== */}
+      {activeTab === 'results' && (
+        <>
+          {/* Filter bar */}
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' as const }}>
+            {collections.length > 1 && (
+              <select
+                value={filterCollection}
+                onChange={(e) => { setFilterCollection(e.target.value); setSelectedIds(new Set()) }}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '13px',
+                  border: '1px solid var(--theme-elevation-200)',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--theme-elevation-0)',
+                  color: 'var(--theme-text)',
+                }}
+              >
+                <option value="">Toutes les collections</option>
+                {collections.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            )}
+            <span style={{ fontSize: '12px', color: 'var(--theme-elevation-500)' }}>
+              {filteredMergedDocs.length} document(s)
+              {selectedIds.size > 0 && ` — ${selectedIds.size} sélectionné(s)`}
+            </span>
           </div>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryLabel}>Score moyen</div>
-            <div style={styles.summaryValue}>{avgScore}</div>
-          </div>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryLabel}>Problèmes</div>
-            <div style={styles.summaryValue}>{totalIssues}</div>
-          </div>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryLabel}>Sans erreurs</div>
-            <div style={styles.summaryValue}>
-              {results.filter((r) => r.issueCount === 0).length}
+
+          {scanProgress && (
+            <div style={styles.progress}>
+              <div>{scanProgress}</div>
+              {scanning && scanTotal > 0 && (
+                <div style={styles.progressBar}>
+                  <div style={styles.progressFill(Math.round((scanCurrent / scanTotal) * 100))} />
+                </div>
+              )}
             </div>
-          </div>
-        </div>
+          )}
+
+          {results.length > 0 && (
+            <div style={styles.summary}>
+              <div style={styles.summaryCard}>
+                <div style={styles.summaryLabel}>Documents</div>
+                <div style={styles.summaryValue}>{results.length}</div>
+              </div>
+              <div style={styles.summaryCard}>
+                <div style={styles.summaryLabel}>Score moyen</div>
+                <div style={styles.summaryValue}>{avgScore}</div>
+              </div>
+              <div style={styles.summaryCard}>
+                <div style={styles.summaryLabel}>Problèmes</div>
+                <div style={styles.summaryValue}>{totalIssues}</div>
+              </div>
+              <div style={styles.summaryCard}>
+                <div style={styles.summaryLabel}>Sans erreurs</div>
+                <div style={styles.summaryValue}>
+                  {results.filter((r) => r.issueCount === 0).length}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(loading && loadingDocs) ? (
+            <div style={styles.empty}>Chargement...</div>
+          ) : sortedResults.length === 0 ? (
+            <div style={styles.empty}>
+              Aucun document trouvé. Vérifiez la configuration des collections.
+            </div>
+          ) : (
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...styles.th, width: '36px' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === filteredMergedDocs.length && filteredMergedDocs.length > 0}
+                      onChange={handleToggleSelectAll}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
+                  <th style={styles.th} onClick={() => handleSort('title')}>
+                    Document{sortIndicator('title')}
+                  </th>
+                  <th style={styles.th}>Collection</th>
+                  <th style={styles.th} onClick={() => handleSort('score')}>
+                    Score{sortIndicator('score')}
+                  </th>
+                  <th style={styles.th} onClick={() => handleSort('issueCount')}>
+                    Problèmes{sortIndicator('issueCount')}
+                  </th>
+                  <th style={styles.th} onClick={() => handleSort('wordCount')}>
+                    Mots{sortIndicator('wordCount')}
+                  </th>
+                  <th style={styles.th} onClick={() => handleSort('lastChecked')}>
+                    Vérifié{sortIndicator('lastChecked')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedResults.map((r) => {
+                  const rowKey = `${r.collection}:${r.docId}`
+                  const isSelected = selectedIds.has(rowKey)
+                  return (
+                    <React.Fragment key={rowKey}>
+                      <tr
+                        style={{
+                          ...styles.tr,
+                          ...(hoveredRow === rowKey ? styles.trHover : {}),
+                          ...(isSelected ? { backgroundColor: 'var(--theme-elevation-100)' } : {}),
+                        }}
+                        onClick={() => {
+                          if (r.issues && r.issues.length > 0) {
+                            setExpandedId(expandedId === rowKey ? null : rowKey)
+                          }
+                        }}
+                        onMouseEnter={() => setHoveredRow(rowKey)}
+                        onMouseLeave={() => setHoveredRow(null)}
+                      >
+                        <td style={styles.td}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(r.docId, r.collection)}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </td>
+                        <td style={styles.td}>
+                          <a
+                            href={`/admin/collections/${r.collection}/${r.docId}`}
+                            style={styles.link}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {r.title || r.slug || r.docId}
+                          </a>
+                        </td>
+                        <td style={styles.td}>{r.collection}</td>
+                        <td style={styles.td}>
+                          {r.score !== null ? (
+                            <span style={styles.scoreBadge(r.score)}>{r.score}</span>
+                          ) : (
+                            <span style={{ fontSize: '11px', color: 'var(--theme-elevation-400)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={styles.td}>{r.lastChecked ? r.issueCount : '—'}</td>
+                        <td style={styles.td}>{r.wordCount || '—'}</td>
+                        <td style={styles.td}>
+                          {r.lastChecked
+                            ? new Date(r.lastChecked).toLocaleString('fr-FR', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })
+                            : '—'}
+                        </td>
+                      </tr>
+                      {expandedId === rowKey && r.issues && r.issues.length > 0 && (
+                        <tr>
+                          <td colSpan={7} style={styles.expandedRow}>
+                            {(r.issues as SpellCheckIssue[])
+                              .filter((issue) => !ignoredIssues.has(`${rowKey}:${issue.ruleId}:${issue.offset}`))
+                              .map((issue, i) => (
+                              <IssueCard
+                                key={`${issue.ruleId}-${issue.offset}-${i}`}
+                                issue={issue}
+                                onFix={(original, replacement, offset, length) =>
+                                  handleFix(r.docId, r.collection, original, replacement, offset, length)
+                                }
+                                onIgnore={() => handleIgnore(rowKey, issue.ruleId, issue.offset)}
+                                onAddToDict={handleAddToDict}
+                              />
+                            ))}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
 
-      {(loading && loadingDocs) ? (
-        <div style={styles.empty}>Chargement...</div>
-      ) : sortedResults.length === 0 ? (
-        <div style={styles.empty}>
-          Aucun document trouvé. Vérifiez la configuration des collections.
-        </div>
-      ) : (
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={{ ...styles.th, width: '36px' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedIds.size === filteredMergedDocs.length && filteredMergedDocs.length > 0}
-                  onChange={handleToggleSelectAll}
-                  style={{ cursor: 'pointer' }}
-                />
-              </th>
-              <th style={styles.th} onClick={() => handleSort('title')}>
-                Document{sortIndicator('title')}
-              </th>
-              <th style={styles.th}>Collection</th>
-              <th style={styles.th} onClick={() => handleSort('score')}>
-                Score{sortIndicator('score')}
-              </th>
-              <th style={styles.th} onClick={() => handleSort('issueCount')}>
-                Problèmes{sortIndicator('issueCount')}
-              </th>
-              <th style={styles.th} onClick={() => handleSort('wordCount')}>
-                Mots{sortIndicator('wordCount')}
-              </th>
-              <th style={styles.th} onClick={() => handleSort('lastChecked')}>
-                Vérifié{sortIndicator('lastChecked')}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedResults.map((r) => {
-              const rowKey = `${r.collection}:${r.docId}`
-              const isSelected = selectedIds.has(rowKey)
-              return (
-                <React.Fragment key={rowKey}>
-                  <tr
-                    style={{
-                      ...styles.tr,
-                      ...(hoveredRow === rowKey ? styles.trHover : {}),
-                      ...(isSelected ? { backgroundColor: 'var(--theme-elevation-100)' } : {}),
-                    }}
-                    onClick={() => {
-                      if (r.issues && r.issues.length > 0) {
-                        setExpandedId(expandedId === rowKey ? null : rowKey)
-                      }
-                    }}
-                    onMouseEnter={() => setHoveredRow(rowKey)}
-                    onMouseLeave={() => setHoveredRow(null)}
-                  >
-                    <td style={styles.td}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(r.docId, r.collection)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </td>
-                    <td style={styles.td}>
-                      <a
-                        href={`/admin/collections/${r.collection}/${r.docId}`}
-                        style={styles.link}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {r.title || r.slug || r.docId}
-                      </a>
-                    </td>
-                    <td style={styles.td}>{r.collection}</td>
-                    <td style={styles.td}>
-                      {r.score !== null ? (
-                        <span style={styles.scoreBadge(r.score)}>{r.score}</span>
-                      ) : (
-                        <span style={{ fontSize: '11px', color: 'var(--theme-elevation-400)' }}>—</span>
-                      )}
-                    </td>
-                    <td style={styles.td}>{r.lastChecked ? r.issueCount : '—'}</td>
-                    <td style={styles.td}>{r.wordCount || '—'}</td>
-                    <td style={styles.td}>
-                      {r.lastChecked
-                        ? new Date(r.lastChecked).toLocaleString('fr-FR', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                          })
-                        : '—'}
-                    </td>
-                  </tr>
-                  {expandedId === rowKey && r.issues && r.issues.length > 0 && (
-                    <tr>
-                      <td colSpan={7} style={styles.expandedRow}>
-                        {(r.issues as SpellCheckIssue[]).map((issue, i) => (
-                          <IssueCard
-                            key={`${issue.ruleId}-${issue.offset}-${i}`}
-                            issue={issue}
-                            onFix={(original, replacement) =>
-                              handleFix(r.docId, r.collection, original, replacement)
-                            }
-                          />
-                        ))}
+      {/* ===== TAB: Dictionary ===== */}
+      {activeTab === 'dictionary' && (
+        <>
+          {/* Add word input */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center' }}>
+            <input
+              type="text"
+              value={dictInput}
+              onChange={(e) => setDictInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleDictAdd() }}
+              placeholder="Ajouter un mot (virgules pour plusieurs)..."
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                fontSize: '13px',
+                border: '1px solid var(--theme-elevation-200)',
+                borderRadius: '4px',
+                backgroundColor: 'var(--theme-elevation-0)',
+                color: 'var(--theme-text)',
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleDictAdd}
+              disabled={!dictInput.trim()}
+              style={{
+                ...styles.scanBtn,
+                padding: '8px 16px',
+                fontSize: '13px',
+                ...(!dictInput.trim() ? styles.scanBtnDisabled : {}),
+              }}
+            >
+              Ajouter
+            </button>
+          </div>
+
+          {/* Action bar */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' as const }}>
+            <input
+              type="text"
+              value={dictSearch}
+              onChange={(e) => setDictSearch(e.target.value)}
+              placeholder="Rechercher..."
+              style={{
+                padding: '6px 10px',
+                fontSize: '13px',
+                border: '1px solid var(--theme-elevation-200)',
+                borderRadius: '4px',
+                backgroundColor: 'var(--theme-elevation-0)',
+                color: 'var(--theme-text)',
+                width: '200px',
+              }}
+            />
+            <span style={{ fontSize: '12px', color: 'var(--theme-elevation-500)' }}>
+              {filteredDictWords.length} mot(s)
+              {dictSelectedIds.size > 0 && ` — ${dictSelectedIds.size} sélectionné(s)`}
+            </span>
+            <div style={{ flex: 1 }} />
+            {dictSelectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => handleDictDelete([...dictSelectedIds])}
+                style={{
+                  ...styles.scanBtn,
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  backgroundColor: 'var(--theme-error-500)',
+                }}
+              >
+                Supprimer ({dictSelectedIds.size})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowImport(!showImport)}
+              style={{
+                ...styles.scanBtn,
+                padding: '6px 14px',
+                fontSize: '12px',
+                backgroundColor: 'var(--theme-elevation-600)',
+              }}
+            >
+              {showImport ? 'Annuler' : 'Importer'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDictExport}
+              disabled={dictWords.length === 0}
+              style={{
+                ...styles.scanBtn,
+                padding: '6px 14px',
+                fontSize: '12px',
+                backgroundColor: 'var(--theme-elevation-600)',
+                ...(dictWords.length === 0 ? styles.scanBtnDisabled : {}),
+              }}
+            >
+              Exporter
+            </button>
+          </div>
+
+          {/* Import textarea */}
+          {showImport && (
+            <div style={{
+              marginBottom: '16px',
+              padding: '16px',
+              borderRadius: '6px',
+              backgroundColor: 'var(--theme-elevation-50)',
+              border: '1px solid var(--theme-elevation-150)',
+            }}>
+              <div style={{ fontSize: '13px', marginBottom: '8px', color: 'var(--theme-text)' }}>
+                Un mot par ligne, ou séparés par des virgules :
+              </div>
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                rows={6}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  fontSize: '13px',
+                  border: '1px solid var(--theme-elevation-200)',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--theme-elevation-0)',
+                  color: 'var(--theme-text)',
+                  fontFamily: 'monospace',
+                  boxSizing: 'border-box' as const,
+                  resize: 'vertical' as const,
+                }}
+                placeholder="mot1&#10;mot2&#10;mot3, mot4, mot5"
+              />
+              <button
+                type="button"
+                onClick={handleDictImport}
+                disabled={!importText.trim()}
+                style={{
+                  ...styles.scanBtn,
+                  marginTop: '8px',
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  ...(!importText.trim() ? styles.scanBtnDisabled : {}),
+                }}
+              >
+                Importer {importText.trim() ? `(${importText.split(/[,;\n]+/).filter((w) => w.trim()).length} mots)` : ''}
+              </button>
+            </div>
+          )}
+
+          {/* Dictionary table */}
+          {dictLoading ? (
+            <div style={styles.empty}>Chargement du dictionnaire...</div>
+          ) : filteredDictWords.length === 0 ? (
+            <div style={styles.empty}>
+              {dictSearch ? 'Aucun mot trouvé.' : 'Dictionnaire vide. Ajoutez des mots ci-dessus.'}
+            </div>
+          ) : (
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...styles.th, width: '36px', cursor: 'default' }}>
+                    <input
+                      type="checkbox"
+                      checked={dictSelectedIds.size === filteredDictWords.length && filteredDictWords.length > 0}
+                      onChange={handleDictToggleSelectAll}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
+                  <th style={{ ...styles.th, cursor: 'default' }}>Mot</th>
+                  <th style={{ ...styles.th, cursor: 'default' }}>Ajouté par</th>
+                  <th style={{ ...styles.th, cursor: 'default' }}>Date</th>
+                  <th style={{ ...styles.th, width: '60px', cursor: 'default' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredDictWords.map((w) => {
+                  const isSelected = dictSelectedIds.has(w.id)
+                  const addedByName = w.addedBy && typeof w.addedBy === 'object'
+                    ? (w.addedBy.name || w.addedBy.email || '—')
+                    : '—'
+                  return (
+                    <tr
+                      key={w.id}
+                      style={{
+                        ...(isSelected ? { backgroundColor: 'var(--theme-elevation-100)' } : {}),
+                      }}
+                    >
+                      <td style={styles.td}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            setDictSelectedIds((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(w.id)) next.delete(w.id)
+                              else next.add(w.id)
+                              return next
+                            })
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </td>
+                      <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 500 }}>
+                        {w.word}
+                      </td>
+                      <td style={{ ...styles.td, fontSize: '12px', color: 'var(--theme-elevation-500)' }}>
+                        {addedByName}
+                      </td>
+                      <td style={{ ...styles.td, fontSize: '12px', color: 'var(--theme-elevation-500)' }}>
+                        {w.createdAt
+                          ? new Date(w.createdAt).toLocaleString('fr-FR', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: '2-digit',
+                            })
+                          : '—'}
+                      </td>
+                      <td style={styles.td}>
+                        <button
+                          type="button"
+                          onClick={() => handleDictDelete([w.id])}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--theme-error-500)',
+                            fontSize: '14px',
+                            padding: '2px 6px',
+                          }}
+                          title="Supprimer"
+                        >
+                          ✕
+                        </button>
                       </td>
                     </tr>
-                  )}
-                </React.Fragment>
-              )
-            })}
-          </tbody>
-        </table>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </div>
   )
