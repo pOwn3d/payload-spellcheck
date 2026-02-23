@@ -14,6 +14,7 @@ import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 
 const RATE_LIMIT_DELAY = 3_000 // 3 seconds between LanguageTool API calls
+const STALE_TIMEOUT = 10 * 60 * 1000 // 10 minutes — consider job dead if no progress
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -31,10 +32,27 @@ interface ScanJob {
   startedAt: string
   completedAt: string | null
   error: string | null
+  lastActivity: number // timestamp of last progress update
 }
 
 // Module-level state — persists across requests
 let currentJob: ScanJob | null = null
+
+/** Check if the current job is stale (no progress for STALE_TIMEOUT) */
+function isJobStale(): boolean {
+  if (!currentJob || currentJob.status !== 'running') return false
+  return Date.now() - currentJob.lastActivity > STALE_TIMEOUT
+}
+
+/** Reset the job if stale */
+function resetIfStale(): void {
+  if (isJobStale() && currentJob) {
+    console.warn(`[spellcheck/bulk] Job stale (no progress for ${STALE_TIMEOUT / 1000}s), auto-resetting`)
+    currentJob.status = 'error'
+    currentJob.error = 'Scan timed out (no progress)'
+    currentJob.completedAt = new Date().toISOString()
+  }
+}
 
 /**
  * Run the bulk scan in background. Updates `currentJob` as it progresses.
@@ -63,6 +81,7 @@ async function runBulkScan(
         collection: collectionSlug,
         limit: 0,
         depth: 1,
+        draft: true, // Read latest version (including unpublished edits)
         overrideAccess: true,
         where: {
           ...(idsForCollection
@@ -77,11 +96,13 @@ async function runBulkScan(
 
     if (currentJob) {
       currentJob.total = totalToScan
+      currentJob.lastActivity = Date.now()
     }
 
     // Second pass: scan each document
     let processed = 0
     let totalIssues = 0
+    let skipped = 0
 
     for (const collectionSlug of collectionsToScan) {
       const docs = docsByCollection.get(collectionSlug) || []
@@ -96,78 +117,89 @@ async function runBulkScan(
         if (currentJob) {
           currentJob.current = processed
           currentJob.currentDoc = docTitle
+          currentJob.lastActivity = Date.now()
         }
 
-        const text = extractAllTextFromDoc(docAny, contentField)
-
-        if (!text.trim()) continue
-
-        const wordCount = countWords(text)
-
-        // Check with LanguageTool
-        let issues = await checkWithLanguageTool(text, language, pluginConfig)
-        issues = await filterFalsePositives(issues, pluginConfig, payload)
-
-        const score = calculateScore(wordCount, issues.length)
-        totalIssues += issues.length
-
-        const result: SpellCheckResult = {
-          docId: String(doc.id),
-          collection: collectionSlug,
-          score,
-          issueCount: issues.length,
-          wordCount,
-          issues,
-          lastChecked: new Date().toISOString(),
-        }
-        results.push(result)
-
-        // Store/update result in collection
+        // Wrap each doc in try/catch — one failure doesn't kill the scan
         try {
-          const existing = await payload.find({
-            collection: 'spellcheck-results',
-            where: {
-              docId: { equals: String(doc.id) },
-              collection: { equals: collectionSlug },
-            },
-            limit: 1,
-            overrideAccess: true,
-          })
+          const text = extractAllTextFromDoc(docAny, contentField)
 
-          const resultData = {
+          if (!text.trim()) {
+            skipped++
+            continue
+          }
+
+          const wordCount = countWords(text)
+
+          // Check with LanguageTool
+          let issues = await checkWithLanguageTool(text, language, pluginConfig)
+          issues = await filterFalsePositives(issues, pluginConfig, payload)
+
+          const score = calculateScore(wordCount, issues.length)
+          totalIssues += issues.length
+
+          const result: SpellCheckResult = {
             docId: String(doc.id),
             collection: collectionSlug,
-            title: docAny.title || '',
-            slug: docAny.slug || '',
             score,
             issueCount: issues.length,
             wordCount,
-            issues: issues as unknown as Record<string, unknown>[],
+            issues,
             lastChecked: new Date().toISOString(),
           }
+          results.push(result)
 
-          if (existing.docs.length > 0) {
-            await payload.update({
+          // Store/update result in collection
+          try {
+            const existing = await payload.find({
               collection: 'spellcheck-results',
-              id: existing.docs[0].id,
-              data: resultData,
+              where: {
+                docId: { equals: String(doc.id) },
+                collection: { equals: collectionSlug },
+              },
+              limit: 1,
               overrideAccess: true,
             })
-          } else {
-            await payload.create({
-              collection: 'spellcheck-results',
-              data: resultData,
-              overrideAccess: true,
-            })
+
+            const resultData = {
+              docId: String(doc.id),
+              collection: collectionSlug,
+              title: docAny.title || '',
+              slug: docAny.slug || '',
+              score,
+              issueCount: issues.length,
+              wordCount,
+              issues: issues as unknown as Record<string, unknown>[],
+              lastChecked: new Date().toISOString(),
+            }
+
+            if (existing.docs.length > 0) {
+              await payload.update({
+                collection: 'spellcheck-results',
+                id: existing.docs[0].id,
+                data: resultData,
+                overrideAccess: true,
+              })
+            } else {
+              await payload.create({
+                collection: 'spellcheck-results',
+                data: resultData,
+                overrideAccess: true,
+              })
+            }
+          } catch (err) {
+            console.error(`[spellcheck/bulk] Failed to store result for ${docTitle}:`, err)
           }
-        } catch (err) {
-          console.error('[spellcheck/bulk] Failed to store result:', err)
+        } catch (docErr) {
+          console.error(`[spellcheck/bulk] Error processing "${docTitle}":`, docErr)
+          // Continue to next doc instead of crashing the entire scan
         }
 
         // Update running totals
         if (currentJob) {
           currentJob.totalIssues = totalIssues
           currentJob.totalDocuments = processed
+          currentJob.lastActivity = Date.now()
         }
 
         // Rate limit delay
@@ -186,21 +218,25 @@ async function runBulkScan(
       currentJob.averageScore = averageScore
       currentJob.totalDocuments = processed
       currentJob.totalIssues = totalIssues
+      currentJob.lastActivity = Date.now()
     }
 
-    console.log(`[spellcheck/bulk] Scan completed: ${processed} docs, ${totalIssues} issues, avg score ${averageScore}`)
+    console.log(`[spellcheck/bulk] Scan completed: ${processed} docs (${skipped} skipped), ${totalIssues} issues, avg score ${averageScore}`)
   } catch (error) {
     console.error('[spellcheck/bulk] Scan error:', error)
     if (currentJob) {
       currentJob.status = 'error'
       currentJob.error = (error as Error).message
       currentJob.completedAt = new Date().toISOString()
+      currentJob.lastActivity = Date.now()
     }
   }
 }
 
 /**
  * POST handler — start a bulk scan in background.
+ * Body: { collection?, ids?, force? }
+ * - force: true — reset any stuck scan and start fresh
  */
 export function createBulkHandler(
   targetCollections: string[],
@@ -212,19 +248,30 @@ export function createBulkHandler(
         return Response.json({ error: 'Unauthorized' }, { status: 401 })
       }
 
-      // If a scan is already running, reject
-      if (currentJob?.status === 'running') {
-        return Response.json({
-          error: 'Scan already in progress',
-          ...currentJob,
-        }, { status: 409 })
-      }
+      // Auto-reset stale jobs
+      resetIfStale()
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
-      const { collection: targetCollection, ids } = body as {
+      const { collection: targetCollection, ids, force } = body as {
         collection?: string
         ids?: Array<{ id: string; collection: string }>
+        force?: boolean
+      }
+
+      // If a scan is already running, reject (unless force=true)
+      if (currentJob?.status === 'running') {
+        if (force) {
+          console.warn('[spellcheck/bulk] Force-resetting stuck scan')
+          currentJob.status = 'error'
+          currentJob.error = 'Force reset by user'
+          currentJob.completedAt = new Date().toISOString()
+        } else {
+          return Response.json({
+            error: 'Scan already in progress',
+            ...currentJob,
+          }, { status: 409 })
+        }
       }
 
       const scanSpecificIds = Array.isArray(ids) && ids.length > 0
@@ -249,6 +296,7 @@ export function createBulkHandler(
         startedAt: new Date().toISOString(),
         completedAt: null,
         error: null,
+        lastActivity: Date.now(),
       }
 
       // Fire-and-forget — scan runs in background
@@ -273,6 +321,9 @@ export function createStatusHandler(): PayloadHandler {
     if (!req.user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Auto-reset stale jobs
+    resetIfStale()
 
     if (!currentJob) {
       return Response.json({ status: 'idle' })
