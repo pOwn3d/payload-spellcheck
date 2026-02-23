@@ -4,10 +4,11 @@
  * POST /api/spellcheck/fix
  * Body: { id, collection, original, replacement, offset?, length?, field? }
  *
- * v0.9.8: Uses extractAllTextFromDocWithSources (single source of truth)
- * to guarantee offset alignment between scan and fix. The old architecture
- * had TWO separate text extraction implementations (extractAllTextFromDoc +
- * buildDocumentEntries) that diverged subtly, causing offset mismatches.
+ * v0.9.8: Uses extractAllTextFromDocWithSources (single source of truth).
+ * v0.10.0: Search-based offset correction — when payload.find() and
+ * payload.findByID() return documents with different field ordering,
+ * the extracted text has shifted offsets. Instead of failing, we search
+ * for the original text near the expected offset (findClosestMatch).
  */
 
 import type { PayloadHandler } from 'payload'
@@ -170,6 +171,12 @@ function legacyFixSubstring(
   replacement: string,
   contentField: string,
 ): { fixed: boolean; modifiedField: string | null } {
+  // Check title (plain text)
+  if (typeof docClone.title === 'string' && docClone.title.includes(original)) {
+    docClone.title = docClone.title.replace(original, replacement)
+    return { fixed: true, modifiedField: 'title' }
+  }
+
   // Check hero richText
   if (docClone.hero?.richText) {
     const state = { done: false }
@@ -282,6 +289,32 @@ function legacyApplyInObject(
   return false
 }
 
+// ─── Search-based offset correction ─────────────────────────────────────
+
+/**
+ * Find all occurrences of `needle` in `text` and return the one closest
+ * to `expectedOffset`. Handles offset drift between scan and fix gracefully.
+ * Returns -1 if not found.
+ */
+function findClosestMatch(text: string, needle: string, expectedOffset: number): number {
+  if (!needle) return -1
+
+  const occurrences: number[] = []
+  let idx = text.indexOf(needle)
+  while (idx !== -1) {
+    occurrences.push(idx)
+    idx = text.indexOf(needle, idx + 1)
+  }
+
+  if (occurrences.length === 0) return -1
+  if (occurrences.length === 1) return occurrences[0]
+
+  // Multiple matches — return the one closest to the expected offset
+  return occurrences.reduce((closest, curr) =>
+    Math.abs(curr - expectedOffset) < Math.abs(closest - expectedOffset) ? curr : closest,
+  )
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────
 
 export function createFixHandler(
@@ -331,28 +364,44 @@ export function createFixHandler(
       const { fullText, segments } = extractAllTextFromDocWithSources(docClone, contentField)
 
       let result: { fixed: boolean; modifiedField: string | null }
+      let method = 'legacy'
 
       if (typeof offset === 'number' && typeof length === 'number') {
-        // Verify the text at the offset matches what LanguageTool reported
         const actual = fullText.slice(offset, offset + length)
-        if (actual !== original) {
-          console.warn(
-            `[spellcheck/fix] Text mismatch at offset ${offset}: expected "${original}", found "${actual}"`,
-          )
-          // Document may have changed since scan — fall back to legacy
-          result = legacyFixSubstring(docClone, original, replacement, contentField)
-        } else {
-          // Offset verified — apply fix to the correct segment
+
+        if (actual === original) {
+          // Exact offset match — apply fix directly
           result = applyFixAtOffset(segments, fullText, offset, length, replacement, docClone)
+          method = 'offset'
+        } else {
+          // Offset drift detected — search for the original text near the expected offset.
+          // This handles cases where payload.find() and payload.findByID() return documents
+          // with different field ordering, causing extractAllTextFromDocWithSources to produce
+          // the same content but in a different order → offset shift.
+          const foundOffset = findClosestMatch(fullText, original, offset)
+
+          if (foundOffset >= 0) {
+            console.log(
+              `[spellcheck/fix] Offset drift corrected: "${original}" at ${foundOffset} (stored: ${offset}, drift: ${foundOffset - offset})`,
+            )
+            result = applyFixAtOffset(segments, fullText, foundOffset, original.length, replacement, docClone)
+            method = 'search'
+          } else {
+            // Original text not found in fullText at all
+            console.warn(
+              `[spellcheck/fix] "${original}" not found in extracted text (${fullText.length} chars)`,
+            )
+            result = { fixed: false, modifiedField: null }
+          }
         }
 
-        // If offset-based fix failed internally, fall back to legacy
+        // If offset/search-based fix failed, fall back to legacy substring search
         if (!result.fixed) {
-          console.warn('[spellcheck/fix] Offset-based fix failed, trying legacy substring search')
           result = legacyFixSubstring(docClone, original, replacement, contentField)
+          if (result.fixed) method = 'legacy'
         }
       } else {
-        // No offset — legacy substring-based fix
+        // No offset provided — legacy substring-based fix
         result = legacyFixSubstring(docClone, original, replacement, contentField)
       }
 
@@ -397,7 +446,7 @@ export function createFixHandler(
         fixesApplied: 1,
         original,
         replacement,
-        method: typeof offset === 'number' ? 'offset' : 'legacy',
+        method,
       })
     } catch (error) {
       console.error('[spellcheck/fix] Error:', error)
