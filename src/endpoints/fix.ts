@@ -314,11 +314,12 @@ export function createFixHandler(
 
       const contentField = field || pluginConfig.contentField || 'content'
 
-      // Fetch the document (depth:0 — same as scan)
+      // Fetch the document (depth:0, draft:true — must match bulk.ts for offset alignment)
       const doc = await req.payload.findByID({
         collection,
         id,
         depth: 0,
+        draft: true,
         overrideAccess: true,
       })
 

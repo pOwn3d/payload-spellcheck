@@ -47,11 +47,12 @@ export function createValidateHandler(
         // Direct text check (no doc lookup)
         textToCheck = rawText
       } else if (id && collection) {
-        // Fetch doc and extract text (depth:0 — must match fix.ts for offset alignment)
+        // Fetch doc (depth:0, draft:true — must match bulk.ts/fix.ts for offset alignment)
         fetchedDoc = await req.payload.findByID({
           collection,
           id,
           depth: 0,
+          draft: true,
           overrideAccess: true,
         })
         textToCheck = extractAllTextFromDoc(fetchedDoc, contentField)
