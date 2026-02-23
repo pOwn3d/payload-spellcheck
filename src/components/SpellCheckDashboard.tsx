@@ -603,11 +603,12 @@ export const SpellCheckDashboard: React.FC = () => {
                     <td style={styles.td}>{r.wordCount || '—'}</td>
                     <td style={styles.td}>
                       {r.lastChecked
-                        ? new Date(r.lastChecked).toLocaleDateString('fr-FR', {
+                        ? new Date(r.lastChecked).toLocaleString('fr-FR', {
                             day: '2-digit',
                             month: '2-digit',
                             hour: '2-digit',
                             minute: '2-digit',
+                            second: '2-digit',
                           })
                         : '—'}
                     </td>
