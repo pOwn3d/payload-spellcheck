@@ -39,7 +39,7 @@ const DEFAULT_SKIP_CATEGORIES = new Set([
   // French categories (LanguageTool uses different IDs for French)
   'CAT_TYPOGRAPHIE',              // French typography rules
   'REPETITIONS_STYLE',            // French style/repetition suggestions
-  'CAT_REGLES_DE_BASE',           // French basic rules (word repetition from CMS extraction)
+  'CAT_REGLES_DE_BASEE',           // French basic rules (word repetition from CMS extraction)
 ])
 
 /** Patterns that indicate non-natural-language content */
@@ -150,7 +150,7 @@ export async function filterFalsePositives(
     if (issue.context && issue.context.trim().length < 5) return false
 
     // Skip repetition issues for dictionary words (heading + body text causes false duplication)
-    if (issue.ruleId.includes('REPET') || issue.category === 'CAT_REGLES_DE_BAS') {
+    if (issue.ruleId.includes('REPET') || issue.category === 'CAT_REGLES_DE_BASE') {
       if (issue.original) {
         const lower = issue.original.toLowerCase()
         for (const word of dictionaryWords) {

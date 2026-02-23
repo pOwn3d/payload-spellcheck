@@ -234,11 +234,22 @@ export const SpellCheckDashboard: React.FC = () => {
     }
   }, [])
 
-  // Load all docs from configured collections (pages + posts)
+  // Load all docs from configured collections (fetched from plugin config)
   const loadAllDocs = useCallback(async () => {
     setLoadingDocs(true)
     try {
-      const collections = ['pages', 'posts']
+      // Fetch configured collections from plugin endpoint
+      let collections: string[] = ['pages', 'posts'] // fallback
+      try {
+        const configRes = await fetch('/api/spellcheck/collections')
+        if (configRes.ok) {
+          const configData = await configRes.json()
+          if (Array.isArray(configData.collections)) {
+            collections = configData.collections
+          }
+        }
+      } catch { /* use fallback */ }
+
       const docs: typeof allDocs = []
       for (const col of collections) {
         try {
@@ -448,7 +459,7 @@ export const SpellCheckDashboard: React.FC = () => {
 
     const updatedCount = updatedIssues.length
     const updatedScore = target.wordCount > 0
-      ? Math.max(0, Math.round(100 - (updatedCount / target.wordCount * 1000)))
+      ? Math.min(100, Math.max(0, Math.round(100 - (updatedCount / target.wordCount * 1000))))
       : target.score
 
     // Optimistic UI update

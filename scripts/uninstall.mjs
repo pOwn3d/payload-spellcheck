@@ -15,11 +15,12 @@ import { execSync } from 'node:child_process'
 const PACKAGE_NAME = '@consilioweb/spellcheck'
 
 // Tables and indexes created by the plugin
-const DB_TABLES = ['spellcheck_results']
+const DB_TABLES = ['spellcheck_results', 'spellcheck_dictionary']
 const DB_INDEXES = [
   'spellcheck_results_doc_id_idx',
   'spellcheck_results_collection_idx',
   'spellcheck_results_last_checked_idx',
+  'spellcheck_dictionary_word_idx',
 ]
 
 // Regex to match any import line from @consilioweb/spellcheck
@@ -230,6 +231,7 @@ function cleanDatabase(dbPath) {
   // Also clean up payload_locked_documents_rels
   statements.push(
     `DELETE FROM \`payload_locked_documents_rels\` WHERE \`spellcheck_results_id\` IS NOT NULL;`,
+    `DELETE FROM \`payload_locked_documents_rels\` WHERE \`spellcheck_dictionary_id\` IS NOT NULL;`,
   )
 
   // Remove the column from payload_locked_documents_rels (SQLite doesn't support DROP COLUMN easily)
@@ -335,10 +337,10 @@ function main() {
   if (keepData) {
     console.log('  \x1b[36mNote:\x1b[0m Database tables were preserved (--keep-data).')
     console.log('  To manually drop them:')
-    console.log('  \x1b[90m  sqlite3 your.db "DROP TABLE IF EXISTS spellcheck_results;"\x1b[0m')
+    console.log('  \x1b[90m  sqlite3 your.db "DROP TABLE IF EXISTS spellcheck_results; DROP TABLE IF EXISTS spellcheck_dictionary;"\x1b[0m')
   } else {
-    console.log('  \x1b[36mNote:\x1b[0m If the column \x1b[33mspellcheck_results_id\x1b[0m remains in')
-    console.log('  \x1b[33mpayload_locked_documents_rels\x1b[0m, it will be ignored by Payload.')
+    console.log('  \x1b[36mNote:\x1b[0m If columns \x1b[33mspellcheck_results_id\x1b[0m or \x1b[33mspellcheck_dictionary_id\x1b[0m')
+    console.log('  remain in \x1b[33mpayload_locked_documents_rels\x1b[0m, they will be ignored by Payload.')
     console.log('  SQLite does not support DROP COLUMN natively.')
   }
 

@@ -189,6 +189,14 @@ export const spellcheckPlugin =
         method: 'delete' as const,
         handler: createDictionaryDeleteHandler(),
       },
+      {
+        path: `${basePath}/collections`,
+        method: 'get' as const,
+        handler: (async (req) => {
+          if (!req.user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+          return Response.json({ collections: targetCollections })
+        }) as import('payload').PayloadHandler,
+      },
     ]
 
     // 4. Add dashboard view

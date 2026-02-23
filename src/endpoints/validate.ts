@@ -40,18 +40,21 @@ export function createValidateHandler(
       const contentField = pluginConfig.contentField || 'content'
       let textToCheck: string
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let fetchedDoc: any = null
+
       if (rawText) {
         // Direct text check (no doc lookup)
         textToCheck = rawText
       } else if (id && collection) {
-        // Fetch doc and extract text
-        const doc = await req.payload.findByID({
+        // Fetch doc and extract text (depth:0 — must match fix.ts for offset alignment)
+        fetchedDoc = await req.payload.findByID({
           collection,
           id,
-          depth: 1,
+          depth: 0,
           overrideAccess: true,
         })
-        textToCheck = extractAllTextFromDoc(doc, contentField)
+        textToCheck = extractAllTextFromDoc(fetchedDoc, contentField)
       } else {
         return Response.json(
           { error: 'Provide { id, collection } or { text }' },
@@ -108,19 +111,9 @@ export function createValidateHandler(
       if (id && collection) {
         const docIdStr = String(id)
         try {
-          // Get doc title/slug for dashboard display
-          let title = ''
-          let slug = ''
-          try {
-            const doc = await req.payload.findByID({
-              collection,
-              id,
-              depth: 0,
-              overrideAccess: true,
-            })
-            title = (doc as Record<string, unknown>).title as string || ''
-            slug = (doc as Record<string, unknown>).slug as string || ''
-          } catch { /* ignore */ }
+          // Get doc title/slug from the already-fetched document
+          const title = fetchedDoc?.title as string || ''
+          const slug = fetchedDoc?.slug as string || ''
 
           const resultData = {
             docId: docIdStr,

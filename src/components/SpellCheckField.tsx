@@ -168,7 +168,7 @@ export const SpellCheckField: React.FC = () => {
 
     const updatedCount = updatedIssues.length
     const updatedScore = prev.wordCount > 0
-      ? Math.max(0, Math.round(100 - (updatedCount / prev.wordCount * 1000)))
+      ? Math.min(100, Math.max(0, Math.round(100 - (updatedCount / prev.wordCount * 1000))))
       : prev.score
 
     setResult({ ...prev, issues: updatedIssues, issueCount: updatedCount, score: updatedScore })

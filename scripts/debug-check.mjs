@@ -69,9 +69,7 @@ function extractRecursive(node, depth, maxDepth) {
   return text
 }
 
-function stripHtml(text) {
-  return text.replace(/<[^>]+>/g, ' ').replace(/&\w+;/g, '').replace(/\s{2,}/g, ' ')
-}
+// stripHtml removed in v0.9.5 — Lexical stores plain text, not HTML.
 
 function extractAllTextFromDoc(doc) {
   const texts = []
@@ -84,7 +82,7 @@ function extractAllTextFromDoc(doc) {
       extractTextFromBlock(block, texts, new WeakSet())
     }
   }
-  return stripHtml(texts.filter(Boolean).join('\n').trim())
+  return texts.filter(Boolean).join('\n').trim()
 }
 
 const SKIP_KEYS = new Set([
@@ -149,13 +147,15 @@ async function checkWithLanguageTool(text, language = 'fr') {
 const DEFAULT_SKIP_RULES = new Set([
   'WHITESPACE_RULE', 'COMMA_PARENTHESIS_WHITESPACE', 'UNPAIRED_BRACKETS',
   'UPPERCASE_SENTENCE_START', 'FRENCH_WHITESPACE', 'MORFOLOGIK_RULE_FR_FR',
-  'APOS_TYP', 'POINT_VIRGULE', 'DASH_RULE', 'FR_SPELLING_RULE',
+  'APOS_TYP', 'APOS_INCORRECT', 'POINT_VIRGULE', 'DASH_RULE', 'FR_SPELLING_RULE',
   'FRENCH_WORD_REPEAT_RULE', 'MOT_TRAIT_MOT', 'PAS_DE_TRAIT_UNION',
+  'D_N', 'DOUBLES_ESPACES', 'ESPACE_ENTRE_VIRGULE_ET_MOT', 'ESPACE_ENTRE_POINT_ET_MOT',
+  'PRONOMS_PERSONNELS_MINUSCULE', 'DET_MAJ_SENT_START', 'FR_SPLIT_WORDS_HYPHEN',
 ])
 
 const DEFAULT_SKIP_CATEGORIES = new Set([
   'TYPOGRAPHY', 'TYPOS', 'STYLE',
-  'CAT_TYPOGRAPHIE', 'REPETITIONS_STYLE', 'CAT_REGLES_DE_BASE',
+  'CAT_TYPOGRAPHIE', 'REPETITIONS_STYLE', 'CAT_REGLES_DE_BASEE',
 ])
 
 const CUSTOM_DICTIONARY = [
@@ -213,7 +213,7 @@ function filterMatch(m) {
     return { skip: true, reason: 'single char, not grammar' }
   }
 
-  if (ruleId.includes('REPET') || category === 'CAT_REGLES_DE_BAS') {
+  if (ruleId.includes('REPET') || category === 'CAT_REGLES_DE_BASE') {
     if (original) {
       const lower = original.toLowerCase()
       for (const word of CUSTOM_DICTIONARY) {

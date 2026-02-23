@@ -73,6 +73,4 @@ export interface SpellCheckPluginConfig {
   skipCategories?: string[]
   /** Custom dictionary — words to never flag */
   customDictionary?: string[]
-  /** Minimum score threshold for warnings (default: 80) */
-  warningThreshold?: number
 }

@@ -80,7 +80,7 @@ async function runBulkScan(
       const allDocs = await payload.find({
         collection: collectionSlug,
         limit: 0,
-        depth: 1,
+        depth: 0, // depth:0 — must match fix.ts for offset alignment
         draft: true, // Read latest version (including unpublished edits)
         overrideAccess: true,
         where: {

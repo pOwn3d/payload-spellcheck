@@ -118,10 +118,15 @@ export function createDictionaryDeleteHandler(): PayloadHandler {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
-      const { id, ids } = body as { id?: string; ids?: string[] }
+      const { id: bodyId, ids } = body as { id?: string; ids?: string[] }
+
+      // Also accept ?id=xxx in query string (for simple DELETE requests)
+      const url = new URL(req.url || '', 'http://localhost')
+      const queryId = url.searchParams.get('id')
 
       const idsToDelete: string[] = []
-      if (id) idsToDelete.push(id)
+      if (bodyId) idsToDelete.push(bodyId)
+      if (queryId) idsToDelete.push(queryId)
       if (Array.isArray(ids)) idsToDelete.push(...ids)
 
       if (idsToDelete.length === 0) {
