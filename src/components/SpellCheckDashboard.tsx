@@ -490,14 +490,37 @@ export const SpellCheckDashboard: React.FC = () => {
     }
   }, [removeIssueFromResults])
 
-  // Ignore issue — remove from UI + persist in DB
+  // Ignore issue — remove from UI + persist in DB + add to ignoredIssues
   const handleIgnore = useCallback((
     docId: string,
     collection: string,
     ruleId: string,
     offset: number,
+    original: string,
   ) => {
     removeIssueFromResults(docId, collection, { offset, ruleId })
+
+    // Persist to ignoredIssues (so it survives rescans)
+    const target = resultsRef.current.find(
+      (r) => r.docId === docId && r.collection === collection,
+    )
+    if (target?.id) {
+      // Load current ignoredIssues, append, and save
+      fetch(`/api/spellcheck-results/${target.id}?depth=0`)
+        .then((res) => res.json())
+        .then((data) => {
+          const existing: Array<{ ruleId: string; original: string }> = Array.isArray(data.ignoredIssues) ? data.ignoredIssues : []
+          const alreadyIgnored = existing.some((e) => e.ruleId === ruleId && e.original === original)
+          if (!alreadyIgnored) {
+            fetch(`/api/spellcheck-results/${target.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ignoredIssues: [...existing, { ruleId, original }] }),
+            }).catch(() => {})
+          }
+        })
+        .catch(() => {})
+    }
   }, [removeIssueFromResults])
 
   // Add word to dictionary (from IssueCard)
@@ -1047,7 +1070,7 @@ export const SpellCheckDashboard: React.FC = () => {
                                 onFix={(original, replacement, offset, length) =>
                                   handleFix(r.docId, r.collection, original, replacement, offset, length)
                                 }
-                                onIgnore={() => handleIgnore(r.docId, r.collection, issue.ruleId, issue.offset)}
+                                onIgnore={() => handleIgnore(r.docId, r.collection, issue.ruleId, issue.offset, issue.original)}
                                 onAddToDict={handleAddToDict}
                               />
                             ))}

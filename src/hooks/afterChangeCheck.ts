@@ -26,13 +26,12 @@ export function createAfterChangeCheckHook(
         const wordCount = countWords(text)
         let issues = await checkWithLanguageTool(text, language, pluginConfig)
         issues = await filterFalsePositives(issues, pluginConfig, req.payload)
-        const score = calculateScore(wordCount, issues.length)
 
         const collectionSlug = typeof collection === 'string'
           ? collection
           : (collection as { slug: string }).slug
 
-        // Upsert result
+        // Load existing result to get ignoredIssues
         const existing = await req.payload.find({
           collection: 'spellcheck-results',
           where: {
@@ -42,6 +41,19 @@ export function createAfterChangeCheckHook(
           limit: 1,
           overrideAccess: true,
         })
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existingDoc = existing.docs.length > 0 ? (existing.docs[0] as any) : null
+        const ignoredIssues: Array<{ ruleId: string; original: string }> = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc.ignoredIssues : []
+
+        // Filter out user-ignored issues
+        if (ignoredIssues.length > 0) {
+          issues = issues.filter((issue) =>
+            !ignoredIssues.some((ignored) => ignored.ruleId === issue.ruleId && ignored.original === issue.original),
+          )
+        }
+
+        const score = calculateScore(wordCount, issues.length)
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const docAny = doc as any
@@ -54,13 +66,14 @@ export function createAfterChangeCheckHook(
           issueCount: issues.length,
           wordCount,
           issues: issues as unknown as Record<string, unknown>[],
+          ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
           lastChecked: new Date().toISOString(),
         }
 
-        if (existing.docs.length > 0) {
+        if (existingDoc) {
           await req.payload.update({
             collection: 'spellcheck-results',
-            id: existing.docs[0].id,
+            id: existingDoc.id,
             data: resultData,
             overrideAccess: true,
           })

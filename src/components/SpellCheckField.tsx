@@ -246,7 +246,26 @@ export const SpellCheckField: React.FC = () => {
                   key={`${issue.ruleId}-${issue.offset}-${i}`}
                   issue={issue}
                   onFix={handleFix}
-                  onIgnore={() => removeIssue({ offset: issue.offset, ruleId: issue.ruleId })}
+                  onIgnore={() => {
+                    removeIssue({ offset: issue.offset, ruleId: issue.ruleId })
+                    // Persist to ignoredIssues (survives rescans)
+                    if (resultDbIdRef.current) {
+                      fetch(`/api/spellcheck-results/${resultDbIdRef.current}?depth=0`)
+                        .then((res) => res.json())
+                        .then((data) => {
+                          const existing: Array<{ ruleId: string; original: string }> = Array.isArray(data.ignoredIssues) ? data.ignoredIssues : []
+                          const alreadyIgnored = existing.some((e) => e.ruleId === issue.ruleId && e.original === issue.original)
+                          if (!alreadyIgnored) {
+                            fetch(`/api/spellcheck-results/${resultDbIdRef.current}`, {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ ignoredIssues: [...existing, { ruleId: issue.ruleId, original: issue.original }] }),
+                            }).catch(() => {})
+                          }
+                        })
+                        .catch(() => {})
+                    }
+                  }}
                   onAddToDict={(word) => {
                     fetch('/api/spellcheck/dictionary', {
                       method: 'POST',
