@@ -47,14 +47,22 @@ export function createValidateHandler(
         // Direct text check (no doc lookup)
         textToCheck = rawText
       } else if (id && collection) {
-        // Fetch doc (depth:0, draft:true — must match bulk.ts/fix.ts for offset alignment)
-        fetchedDoc = await req.payload.findByID({
+        // Use payload.find() — NOT findByID() — to match bulk.ts exactly.
+        // In Payload + SQLite, find() and findByID() can return different
+        // document structures (blocks in separate tables, different JOINs).
+        const findResult = await req.payload.find({
           collection,
-          id,
+          where: { id: { equals: id } },
+          limit: 1,
           depth: 0,
           draft: true,
           overrideAccess: true,
         })
+        if (!findResult.docs.length) {
+          return Response.json({ error: 'Document not found' }, { status: 404 })
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fetchedDoc = findResult.docs[0] as any
         textToCheck = extractAllTextFromDoc(fetchedDoc, contentField)
       } else {
         return Response.json(
