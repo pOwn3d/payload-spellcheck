@@ -93,6 +93,7 @@ ${truncatedText}`
       category: issue.category,
       message: issue.message,
       context: issue.context,
+      contextOffset: issue.context ? issue.context.indexOf(issue.original) : 0,
       offset: 0,
       length: issue.original.length,
       original: issue.original,

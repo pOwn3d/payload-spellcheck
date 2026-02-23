@@ -43,6 +43,8 @@ export function createAfterChangeCheckHook(
           overrideAccess: true,
         })
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const docAny = doc as any
         const resultData = {
           docId: String(doc.id),
           collection: collectionSlug,
