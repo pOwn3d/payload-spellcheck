@@ -98,6 +98,19 @@ export function filterFalsePositives(
     // Skip issues in very short context (likely a label or button text)
     if (issue.context && issue.context.trim().length < 5) return false
 
+    // Skip repetition issues for dictionary words (heading + body text causes false duplication)
+    if (issue.ruleId.includes('REPET') || issue.category === 'CAT_REGLES_DE_BAS') {
+      if (issue.original) {
+        const lower = issue.original.toLowerCase()
+        for (const word of dictionaryWords) {
+          if (lower.includes(word) || word.includes(lower)) return false
+        }
+      }
+      // Skip repetition when replacement is empty or equals original (just remove duplication)
+      if (issue.replacements.length > 0 && issue.replacements[0] === issue.original) return false
+      if (issue.replacements.length > 0 && issue.replacements[0] === '') return false
+    }
+
     return true
   })
 }

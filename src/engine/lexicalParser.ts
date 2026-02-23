@@ -63,7 +63,7 @@ export function extractAllTextFromDoc(
     }
   }
 
-  return texts.filter(Boolean).join('\n').trim()
+  return stripHtml(texts.filter(Boolean).join('\n').trim())
 }
 
 /**
@@ -189,6 +189,22 @@ function extractRecursive(
   }
 
   return text
+}
+
+/**
+ * Strip any residual HTML tags from extracted text.
+ * Safety measure in case HTML leaks through Lexical or plain text fields.
+ */
+function stripHtml(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, ' ')  // Remove HTML tags
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#?\w+;/g, '')   // Remove remaining HTML entities
+    .replace(/\s{2,}/g, ' ')   // Collapse multiple spaces
 }
 
 /**

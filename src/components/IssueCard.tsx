@@ -139,6 +139,8 @@ export const IssueCard: React.FC<IssueCardProps> = ({
 }) => {
   const [showDiff, setShowDiff] = useState(false)
   const [selectedReplacement, setSelectedReplacement] = useState(0)
+  const [manualEdit, setManualEdit] = useState(false)
+  const [manualValue, setManualValue] = useState('')
 
   // Use contextOffset from LanguageTool for accurate positioning
   const getContextIdx = (ctx: string, original: string): number => {
@@ -192,7 +194,9 @@ export const IssueCard: React.FC<IssueCardProps> = ({
     )
   }
 
-  const currentReplacement = issue.replacements[selectedReplacement] || ''
+  const currentReplacement = manualEdit && manualValue
+    ? manualValue
+    : issue.replacements[selectedReplacement] || ''
 
   return (
     <div style={{ ...styles.card, ...(isFixed ? styles.fixed : {}) }}>
@@ -212,9 +216,10 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         </div>
       ) : null}
 
-      {issue.replacements.length > 0 && (
+      {/* Suggestion or manual edit */}
+      {!manualEdit && issue.replacements.length > 0 && (
         <div style={styles.suggestion}>
-          <span style={styles.suggestionLabel}>→</span>
+          <span style={styles.suggestionLabel}>Suggestion :</span>
           {issue.replacements.length > 1 ? (
             <select
               value={selectedReplacement}
@@ -239,6 +244,31 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         </div>
       )}
 
+      {/* Manual edit input */}
+      {manualEdit && !isFixed && (
+        <div style={{ marginBottom: '8px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--theme-elevation-500)', marginBottom: '4px' }}>
+            Correction manuelle :
+          </div>
+          <input
+            type="text"
+            value={manualValue}
+            onChange={(e) => setManualValue(e.target.value)}
+            placeholder={issue.original}
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              fontSize: '13px',
+              border: '1px solid var(--theme-elevation-200)',
+              borderRadius: '3px',
+              backgroundColor: 'var(--theme-elevation-0)',
+              color: 'var(--theme-text)',
+              boxSizing: 'border-box' as const,
+            }}
+          />
+        </div>
+      )}
+
       <div style={styles.actions}>
         {issue.context && currentReplacement && !isFixed && (
           <button
@@ -247,6 +277,18 @@ export const IssueCard: React.FC<IssueCardProps> = ({
             onClick={() => setShowDiff(!showDiff)}
           >
             {showDiff ? 'Masquer' : 'Avant/Après'}
+          </button>
+        )}
+        {!isFixed && (
+          <button
+            type="button"
+            style={{ ...styles.btn, fontSize: '10px' }}
+            onClick={() => {
+              setManualEdit(!manualEdit)
+              if (!manualEdit) setManualValue(issue.original)
+            }}
+          >
+            {manualEdit ? 'Suggestion' : 'Manuel'}
           </button>
         )}
         {currentReplacement && onFix && !isFixed && (
@@ -269,7 +311,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         )}
         {isFixed && (
           <span style={{ fontSize: '11px', color: 'var(--theme-success-500)' }}>
-            ✓ Corrigé
+            Corrige
           </span>
         )}
       </div>
