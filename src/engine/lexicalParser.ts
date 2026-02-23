@@ -161,9 +161,9 @@ function extractRecursive(
 
   let text = ''
 
-  // Extract text from text nodes
+  // Extract text from text nodes (no extra space — Lexical text nodes already contain spaces)
   if (node.type === 'text' && typeof node.text === 'string') {
-    text += node.text + ' '
+    text += node.text
   }
 
   // Add line breaks after block-level elements
