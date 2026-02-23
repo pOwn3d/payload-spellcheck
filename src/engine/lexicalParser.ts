@@ -194,6 +194,9 @@ function extractRecursive(
 /**
  * Strip any residual HTML tags from extracted text.
  * Safety measure in case HTML leaks through Lexical or plain text fields.
+ *
+ * IMPORTANT: Does NOT collapse multiple spaces — LanguageTool offsets must
+ * match the raw document text exactly for the fix endpoint to work.
  */
 function stripHtml(text: string): string {
   return text
@@ -204,7 +207,6 @@ function stripHtml(text: string): string {
     .replace(/&nbsp;/g, ' ')
     .replace(/&quot;/g, '"')
     .replace(/&#?\w+;/g, '')   // Remove remaining HTML entities
-    .replace(/\s{2,}/g, ' ')   // Collapse multiple spaces
 }
 
 /**
