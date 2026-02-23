@@ -140,9 +140,19 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   const [showDiff, setShowDiff] = useState(false)
   const [selectedReplacement, setSelectedReplacement] = useState(0)
 
+  // Use contextOffset from LanguageTool for accurate positioning
+  const getContextIdx = (ctx: string, original: string): number => {
+    // Use the stored contextOffset if available (accurate position from LanguageTool)
+    if (typeof issue.contextOffset === 'number' && issue.contextOffset >= 0) {
+      return issue.contextOffset
+    }
+    // Fallback to indexOf (may find wrong occurrence for short strings)
+    return ctx.indexOf(original)
+  }
+
   const highlightContext = (ctx: string, original: string) => {
-    if (!original || !ctx.includes(original)) return ctx
-    const idx = ctx.indexOf(original)
+    const idx = getContextIdx(ctx, original)
+    if (!original || idx < 0) return ctx
     return (
       <>
         {ctx.slice(0, idx)}
@@ -153,7 +163,8 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   }
 
   const renderDiff = (ctx: string, original: string, replacement: string) => {
-    if (!original || !ctx.includes(original)) {
+    const idx = getContextIdx(ctx, original)
+    if (!original || idx < 0) {
       return (
         <div style={styles.diff}>
           <span style={styles.diffBefore}>{original}</span>
@@ -162,7 +173,6 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         </div>
       )
     }
-    const idx = ctx.indexOf(original)
     return (
       <div style={styles.diff}>
         <div style={{ marginBottom: '4px', color: 'var(--theme-elevation-400)', fontSize: '10px', textTransform: 'uppercase' as const, letterSpacing: '0.5px' }}>

@@ -102,6 +102,7 @@ function parseMatches(matches: LTMatch[]): SpellCheckIssue[] {
     category: m.rule.category.id,
     message: m.message,
     context: m.context.text,
+    contextOffset: m.context.offset,
     offset: m.offset,
     length: m.length,
     original: m.context.text.slice(m.context.offset, m.context.offset + m.context.length),

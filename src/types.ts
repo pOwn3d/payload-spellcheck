@@ -11,6 +11,8 @@ export interface SpellCheckIssue {
   message: string
   /** Text context around the error */
   context: string
+  /** Offset of the error within the context string */
+  contextOffset: number
   /** Offset within the full extracted text */
   offset: number
   /** Length of the problematic text */
