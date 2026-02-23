@@ -135,6 +135,32 @@ async function runBulkScan(
           let issues = await checkWithLanguageTool(text, language, pluginConfig)
           issues = await filterFalsePositives(issues, pluginConfig, payload)
 
+          // Load existing result to get ignoredIssues
+          let existingDoc: { id: string | number; ignoredIssues?: Array<{ ruleId: string; original: string }> } | null = null
+          try {
+            const existing = await payload.find({
+              collection: 'spellcheck-results',
+              where: {
+                docId: { equals: String(doc.id) },
+                collection: { equals: collectionSlug },
+              },
+              limit: 1,
+              overrideAccess: true,
+            })
+            if (existing.docs.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              existingDoc = existing.docs[0] as any
+            }
+          } catch { /* ignore */ }
+
+          // Filter out user-ignored issues (persistent across rescans)
+          const ignoredIssues: Array<{ ruleId: string; original: string }> = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc!.ignoredIssues : []
+          if (ignoredIssues.length > 0) {
+            issues = issues.filter((issue) =>
+              !ignoredIssues.some((ignored) => ignored.ruleId === issue.ruleId && ignored.original === issue.original),
+            )
+          }
+
           const score = calculateScore(wordCount, issues.length)
           totalIssues += issues.length
 
@@ -149,18 +175,8 @@ async function runBulkScan(
           }
           results.push(result)
 
-          // Store/update result in collection
+          // Store/update result in collection (preserve ignoredIssues)
           try {
-            const existing = await payload.find({
-              collection: 'spellcheck-results',
-              where: {
-                docId: { equals: String(doc.id) },
-                collection: { equals: collectionSlug },
-              },
-              limit: 1,
-              overrideAccess: true,
-            })
-
             const resultData = {
               docId: String(doc.id),
               collection: collectionSlug,
@@ -170,13 +186,14 @@ async function runBulkScan(
               issueCount: issues.length,
               wordCount,
               issues: issues as unknown as Record<string, unknown>[],
+              ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
               lastChecked: new Date().toISOString(),
             }
 
-            if (existing.docs.length > 0) {
+            if (existingDoc) {
               await payload.update({
                 collection: 'spellcheck-results',
-                id: existing.docs[0].id,
+                id: existingDoc.id,
                 data: resultData,
                 overrideAccess: true,
               })

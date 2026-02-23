@@ -86,6 +86,13 @@ export function createSpellCheckResultsCollection(): CollectionConfig {
         },
       },
       {
+        name: 'ignoredIssues',
+        type: 'json',
+        admin: {
+          description: 'JSON array of { ruleId, original } — issues ignored by the user, filtered on rescan',
+        },
+      },
+      {
         name: 'lastChecked',
         type: 'date',
         required: true,

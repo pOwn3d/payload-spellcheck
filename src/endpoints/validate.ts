@@ -72,23 +72,42 @@ export function createValidateHandler(
 
       // Filter false positives (async — loads dynamic dictionary from DB)
       issues = await filterFalsePositives(issues, pluginConfig, req.payload)
+
+      // Load existing result to get ignoredIssues (persistent ignore)
+      let ignoredIssues: Array<{ ruleId: string; original: string }> = []
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let existingDoc: any = null
+      if (id && collection) {
+        try {
+          const existing = await req.payload.find({
+            collection: 'spellcheck-results',
+            where: {
+              docId: { equals: String(id) },
+              collection: { equals: collection },
+            },
+            limit: 1,
+            overrideAccess: true,
+          })
+          if (existing.docs.length > 0) {
+            existingDoc = existing.docs[0]
+            ignoredIssues = Array.isArray(existingDoc.ignoredIssues) ? existingDoc.ignoredIssues : []
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Filter out user-ignored issues
+      if (ignoredIssues.length > 0) {
+        issues = issues.filter((issue) =>
+          !ignoredIssues.some((ignored) => ignored.ruleId === issue.ruleId && ignored.original === issue.original),
+        )
+      }
+
       const score = calculateScore(wordCount, issues.length)
 
       // Store result if we have a doc ID
       if (id && collection) {
         const docIdStr = String(id)
         try {
-          // Upsert: find existing result for this doc
-          const existing = await req.payload.find({
-            collection: 'spellcheck-results',
-            where: {
-              docId: { equals: docIdStr },
-              collection: { equals: collection },
-            },
-            limit: 1,
-            overrideAccess: true,
-          })
-
           // Get doc title/slug for dashboard display
           let title = ''
           let slug = ''
@@ -112,13 +131,14 @@ export function createValidateHandler(
             issueCount: issues.length,
             wordCount,
             issues: issues as unknown as Record<string, unknown>[],
+            ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
             lastChecked: new Date().toISOString(),
           }
 
-          if (existing.docs.length > 0) {
+          if (existingDoc) {
             await req.payload.update({
               collection: 'spellcheck-results',
-              id: existing.docs[0].id,
+              id: existingDoc.id,
               data: resultData,
               overrideAccess: true,
             })
