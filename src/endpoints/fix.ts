@@ -22,6 +22,11 @@ interface LexicalNode {
 
 const SKIP_TYPES = new Set(['code', 'code-block', 'codeBlock'])
 
+/** Escape special regex characters in a literal string */
+function escapeRegexLiteral(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // ─── Text extraction helpers (mirror lexicalParser.ts) ──────────────────
 
 function isLexicalJson(value: unknown): value is LexicalNode {
@@ -289,19 +294,33 @@ function applyFixAtOffset(
       const actualText = entry.text.slice(localOffset, localOffset + targetLength)
       if (actualText !== original) {
         console.warn(
-          `[spellcheck/fix] Text mismatch at offset ${targetOffset}: expected "${original}", found "${actualText}"`,
+          `[spellcheck/fix] Text mismatch at offset ${targetOffset} (local ${localOffset}): expected "${original}", found "${actualText}"`,
         )
-        // Try to find `original` nearby (within ±20 chars) for slight offset drift
-        const searchStart = Math.max(0, localOffset - 20)
-        const searchEnd = Math.min(entry.text.length, localOffset + 20)
-        const nearby = entry.text.slice(searchStart, searchEnd)
-        const nearbyIdx = nearby.indexOf(original)
-        if (nearbyIdx === -1) {
-          return { fixed: false, modifiedField: null }
+
+        // Try whitespace-normalized match (LanguageTool normalizes \n to space in context)
+        // Only apply if the match length is the same (avoids cross-paragraph duplication)
+        const wsRegex = new RegExp(escapeRegexLiteral(original).replace(/\s+/g, '\\s+'))
+        const wsSlice = entry.text.slice(Math.max(0, localOffset - 5), localOffset + targetLength + 10)
+        const wsMatch = wsRegex.exec(wsSlice)
+        if (wsMatch && wsMatch[0].length === targetLength) {
+          const adjustedLocal = Math.max(0, localOffset - 5) + (wsMatch.index ?? 0)
+          console.info(`[spellcheck/fix] Whitespace-normalized match at local offset ${adjustedLocal}`)
+          return applyFixToEntry(entry, adjustedLocal, targetLength, replacement)
         }
-        // Adjust localOffset to the nearby match
-        const adjustedLocal = searchStart + nearbyIdx
-        return applyFixToEntry(entry, adjustedLocal, targetLength, replacement)
+
+        // Try to find `original` anywhere in this entry's text (handles residual offset drift)
+        const nearbyIdx = entry.text.indexOf(original, Math.max(0, localOffset - 100))
+        if (nearbyIdx !== -1) {
+          console.info(`[spellcheck/fix] Found "${original}" at adjusted offset ${nearbyIdx} (drift: ${nearbyIdx - localOffset})`)
+          return applyFixToEntry(entry, nearbyIdx, targetLength, replacement)
+        }
+        // Last resort: search from the beginning of the entry
+        const fallbackIdx = entry.text.indexOf(original)
+        if (fallbackIdx !== -1) {
+          console.info(`[spellcheck/fix] Found "${original}" via full entry search at offset ${fallbackIdx}`)
+          return applyFixToEntry(entry, fallbackIdx, targetLength, replacement)
+        }
+        return { fixed: false, modifiedField: null }
       }
 
       return applyFixToEntry(entry, localOffset, targetLength, replacement)

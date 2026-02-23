@@ -15,11 +15,19 @@ const DEFAULT_SKIP_RULES = new Set([
   'FRENCH_WHITESPACE',            // Non-breaking spaces are inconsistent in CMS
   'MORFOLOGIK_RULE_FR_FR',        // Overly aggressive French spelling (flags proper nouns)
   'APOS_TYP',                     // Typography apostrophe (curly vs straight)
+  'APOS_INCORRECT',               // Backtick/apostrophe in code contexts
   'POINT_VIRGULE',                // Semicolon spacing
   'DASH_RULE',                    // Dash types (em vs en)
   'FRENCH_WORD_REPEAT_RULE',      // Repetitions from heading+body extraction
   'MOT_TRAIT_MOT',                // Hyphenated English tech terms (mobile-first, utility-first)
   'PAS_DE_TRAIT_UNION',           // Prefix hyphenation (multi-appareils)
+  'D_N',                          // Determiner gender mismatch on English terms (un pull, du June)
+  'DOUBLES_ESPACES',              // Double spaces — auto-fixable but noisy in CMS content
+  'ESPACE_ENTRE_VIRGULE_ET_MOT',  // Grammalecte: space after comma (often CMS extraction artifacts)
+  'ESPACE_ENTRE_POINT_ET_MOT',    // Grammalecte: space after period (extraction artifacts)
+  'PRONOMS_PERSONNELS_MINUSCULE', // False positive from paragraph boundary extraction (heading + body)
+  'DET_MAJ_SENT_START',           // Same issue: paragraph boundary makes it look like missing capital
+  'FR_SPLIT_WORDS_HYPHEN',        // Suggests splitting hyphenated words (éco-responsable → éco responsable)
 ])
 
 /** Default categories to skip (English + French LanguageTool category IDs) */
@@ -48,6 +56,15 @@ const SKIP_PATTERNS = [
   /^0[1-9]\d{8}$/,               // French phone numbers
   /^\+?\d[\d\s.-]{8,}$/,         // International phone numbers
   /^[a-z-]+\.[a-z]{2,}$/i,       // Domain names
+  /^`.*`$/,                       // Inline code (backticks)
+  /^[a-z]+_[a-z]+/i,             // snake_case identifiers
+  /^--[a-z]/,                     // CSS custom properties (--color-primary)
+]
+
+/** Context patterns that indicate the issue is inside code/tech content */
+const CODE_CONTEXT_PATTERNS = [
+  /`[^`]*$/,                      // Inside backtick code span (opening but no close before issue)
+  /\b(npm|pnpm|yarn|git|docker|curl|wget)\b/i, // CLI commands
 ]
 
 /**
@@ -115,6 +132,15 @@ export async function filterFalsePositives(
       for (const pattern of SKIP_PATTERNS) {
         if (pattern.test(issue.original)) return false
       }
+    }
+
+    // Skip issues where the context suggests code/tech content
+    if (issue.context) {
+      for (const pattern of CODE_CONTEXT_PATTERNS) {
+        if (pattern.test(issue.context)) return false
+      }
+      // Skip if the original text is surrounded by backticks in context
+      if (issue.original && issue.context.includes('`' + issue.original + '`')) return false
     }
 
     // Skip issues where the suggestion is the same as original (LanguageTool bug)
