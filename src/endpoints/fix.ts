@@ -4,19 +4,16 @@
  * POST /api/spellcheck/fix
  * Body: { id, collection, original, replacement, offset?, length?, field? }
  *
- * v0.8.0: offset-based targeting. Uses the LanguageTool offset to locate the
- * exact text node and position. Falls back to substring search if offset is missing.
+ * v0.9.8: Uses extractAllTextFromDocWithSources (single source of truth)
+ * to guarantee offset alignment between scan and fix. The old architecture
+ * had TWO separate text extraction implementations (extractAllTextFromDoc +
+ * buildDocumentEntries) that diverged subtly, causing offset mismatches.
  */
 
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
-import { extractTextFromLexical, extractAllTextFromDoc } from '../engine/lexicalParser.js'
-import { type LexicalNode, SKIP_TYPES, SKIP_KEYS, PLAIN_TEXT_KEYS, isLexicalJson } from '../engine/shared.js'
-
-/** Escape special regex characters in a literal string */
-function escapeRegexLiteral(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
+import { extractAllTextFromDocWithSources, type TextSegment } from '../engine/lexicalParser.js'
+import { type LexicalNode, SKIP_TYPES, PLAIN_TEXT_KEYS } from '../engine/shared.js'
 
 // ─── Offset-based Lexical tree fix ──────────────────────────────────────
 
@@ -101,222 +98,60 @@ function fixInLexicalTree(
   return { fixed: false, chars }
 }
 
-// ─── Document text entry collection (mirrors extractAllTextFromDoc) ─────
-
-interface TextEntry {
-  text: string
-  source:
-    | { type: 'title' }
-    | { type: 'lexical'; data: LexicalNode; topField: string }
-    | { type: 'plain'; parent: Record<string, unknown>; key: string; topField: string }
-}
+// ─── Offset-based fix using unified extraction ──────────────────────────
 
 /**
- * Collect text entries from a block (mirrors extractTextFromBlock from lexicalParser.ts).
- * Instead of pushing strings, pushes TextEntry objects with source info.
- */
-function collectBlockEntries(
-  obj: unknown,
-  entries: TextEntry[],
-  visited: WeakSet<object>,
-  depth = 0,
-): void {
-  if (!obj || typeof obj !== 'object' || depth > 10) return
-  if (visited.has(obj as object)) return
-  visited.add(obj as object)
-
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      collectBlockEntries(item, entries, visited, depth + 1)
-    }
-    return
-  }
-
-  const record = obj as Record<string, unknown>
-
-  for (const [key, value] of Object.entries(record)) {
-    if (SKIP_KEYS.has(key)) continue
-
-    // Lexical JSON field
-    if (isLexicalJson(value)) {
-      const text = extractTextFromLexical(value)
-      if (text) {
-        entries.push({
-          text,
-          source: { type: 'lexical', data: value as LexicalNode, topField: 'layout' },
-        })
-      }
-      continue
-    }
-
-    // Plain text fields
-    if (typeof value === 'string' && value.length > 2 && value.length < 5000) {
-      if (/^(https?:|\/|#|\d{4}-\d{2}|[0-9a-f-]{36}|data:|mailto:)/i.test(value)) continue
-      if (/^\{.*\}$/.test(value) || /^\[.*\]$/.test(value)) continue
-      if (PLAIN_TEXT_KEYS.has(key)) {
-        entries.push({
-          text: value,
-          source: { type: 'plain', parent: record, key, topField: 'layout' },
-        })
-      }
-    }
-
-    // Recurse into nested objects/arrays
-    if (typeof value === 'object' && value !== null) {
-      collectBlockEntries(value, entries, visited, depth + 1)
-    }
-  }
-}
-
-/**
- * Build text entries from the entire document, in the same order as extractAllTextFromDoc.
- * Returns entries + deep-cloned doc (mutations go to the clone).
- */
-function buildDocumentEntries(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  doc: any,
-  contentField: string,
-): { entries: TextEntry[]; docClone: Record<string, unknown> } {
-  const docClone = JSON.parse(JSON.stringify(doc))
-  const entries: TextEntry[] = []
-
-  // 1. Title (plain text)
-  if (docClone.title && typeof docClone.title === 'string') {
-    entries.push({ text: docClone.title, source: { type: 'title' } })
-  }
-
-  // 2. Hero richText
-  if (docClone.hero?.richText) {
-    const text = extractTextFromLexical(docClone.hero.richText)
-    if (text) {
-      entries.push({
-        text,
-        source: { type: 'lexical', data: docClone.hero.richText, topField: 'hero' },
-      })
-    }
-  }
-
-  // 3. Content field
-  if (docClone[contentField] && isLexicalJson(docClone[contentField])) {
-    const text = extractTextFromLexical(docClone[contentField])
-    if (text) {
-      entries.push({
-        text,
-        source: { type: 'lexical', data: docClone[contentField], topField: contentField },
-      })
-    }
-  }
-
-  // 4. Layout blocks
-  if (Array.isArray(docClone.layout)) {
-    const visited = new WeakSet<object>()
-    for (const block of docClone.layout) {
-      collectBlockEntries(block, entries, visited)
-    }
-  }
-
-  return { entries, docClone }
-}
-
-// ─── Fix application ────────────────────────────────────────────────────
-
-interface OffsetRange {
-  startOffset: number
-  endOffset: number
-  entry: TextEntry
-}
-
-/**
- * Apply a fix at a specific offset in the document.
- * Returns the top-level field that was modified (for saving).
+ * Apply a fix at a specific offset using segments from extractAllTextFromDocWithSources.
+ * The offset is guaranteed correct because the same function produced the fullText.
  */
 function applyFixAtOffset(
-  entries: TextEntry[],
+  segments: TextSegment[],
+  fullText: string,
   targetOffset: number,
   targetLength: number,
-  original: string,
   replacement: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  docClone: any,
 ): { fixed: boolean; modifiedField: string | null } {
-  // Build offset ranges (entries joined by '\n')
-  const ranges: OffsetRange[] = []
+  // Compute trim offset (fullText = rawJoined.trim())
+  const rawJoined = segments.map((s) => s.text).join('\n')
+  const trimOffset = rawJoined.length - rawJoined.trimStart().length
+  const rawTargetOffset = targetOffset + trimOffset
+
   let pos = 0
-  for (const entry of entries) {
-    if (!entry.text) continue
-    ranges.push({
-      startOffset: pos,
-      endOffset: pos + entry.text.length,
-      entry,
-    })
-    pos += entry.text.length + 1 // +1 for '\n' separator
-  }
-
-  // Find the range containing the target offset
-  for (const range of ranges) {
-    if (targetOffset >= range.startOffset && targetOffset < range.endOffset) {
-      const localOffset = targetOffset - range.startOffset
-      const { entry } = range
-
-      // Verify the text at this position matches `original`
-      const actualText = entry.text.slice(localOffset, localOffset + targetLength)
-      if (actualText !== original) {
-        console.warn(
-          `[spellcheck/fix] Text mismatch at offset ${targetOffset} (local ${localOffset}): expected "${original}", found "${actualText}"`,
-        )
-
-        // Try whitespace-normalized match (LanguageTool normalizes \n to space in context)
-        // Only apply if the match length is the same (avoids cross-paragraph duplication)
-        const wsRegex = new RegExp(escapeRegexLiteral(original).replace(/\s+/g, '\\s+'))
-        const wsSlice = entry.text.slice(Math.max(0, localOffset - 5), localOffset + targetLength + 10)
-        const wsMatch = wsRegex.exec(wsSlice)
-        if (wsMatch && wsMatch[0].length === targetLength) {
-          const adjustedLocal = Math.max(0, localOffset - 5) + (wsMatch.index ?? 0)
-          console.info(`[spellcheck/fix] Whitespace-normalized match at local offset ${adjustedLocal}`)
-          return applyFixToEntry(entry, adjustedLocal, targetLength, replacement)
-        }
-
-        // Try to find `original` anywhere in this entry's text (handles residual offset drift)
-        const nearbyIdx = entry.text.indexOf(original, Math.max(0, localOffset - 100))
-        if (nearbyIdx !== -1) {
-          console.info(`[spellcheck/fix] Found "${original}" at adjusted offset ${nearbyIdx} (drift: ${nearbyIdx - localOffset})`)
-          return applyFixToEntry(entry, nearbyIdx, targetLength, replacement)
-        }
-        // Last resort: search from the beginning of the entry
-        const fallbackIdx = entry.text.indexOf(original)
-        if (fallbackIdx !== -1) {
-          console.info(`[spellcheck/fix] Found "${original}" via full entry search at offset ${fallbackIdx}`)
-          return applyFixToEntry(entry, fallbackIdx, targetLength, replacement)
-        }
-        return { fixed: false, modifiedField: null }
-      }
-
-      return applyFixToEntry(entry, localOffset, targetLength, replacement)
+  for (const segment of segments) {
+    const segEnd = pos + segment.text.length
+    if (rawTargetOffset >= pos && rawTargetOffset < segEnd) {
+      const localOffset = rawTargetOffset - pos
+      return applyFixToSegment(segment, localOffset, targetLength, replacement, docClone)
     }
+    pos = segEnd + 1 // +1 for '\n' separator
   }
 
   return { fixed: false, modifiedField: null }
 }
 
-function applyFixToEntry(
-  entry: TextEntry,
+function applyFixToSegment(
+  segment: TextSegment,
   localOffset: number,
   targetLength: number,
   replacement: string,
-): { fixed: boolean; modifiedField: string } {
-  const { source } = entry
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  docClone: any,
+): { fixed: boolean; modifiedField: string | null } {
+  const { source } = segment
 
   switch (source.type) {
     case 'title': {
-      // Can't directly mutate title from here — we need docClone access.
-      // Title entries store text from docClone.title, but we can't splice it here.
-      // Instead, mark it and let the caller handle it.
-      return { fixed: true, modifiedField: '__title__' }
+      const title = docClone.title as string
+      docClone.title = title.slice(0, localOffset) + replacement + title.slice(localOffset + targetLength)
+      return { fixed: true, modifiedField: 'title' }
     }
     case 'lexical': {
       const r = fixInLexicalTree(source.data, localOffset, targetLength, replacement, 0)
-      if (r.fixed) {
-        return { fixed: true, modifiedField: source.topField }
-      }
-      return { fixed: false, modifiedField: null }
+      return r.fixed
+        ? { fixed: true, modifiedField: source.topField }
+        : { fixed: false, modifiedField: null }
     }
     case 'plain': {
       const currentVal = source.parent[source.key] as string
@@ -479,7 +314,7 @@ export function createFixHandler(
 
       const contentField = field || pluginConfig.contentField || 'content'
 
-      // Fetch the document
+      // Fetch the document (depth:0 — same as scan)
       const doc = await req.payload.findByID({
         collection,
         id,
@@ -487,35 +322,36 @@ export function createFixHandler(
         overrideAccess: true,
       })
 
-      // Build entries + deep clone
-      const { entries, docClone } = buildDocumentEntries(doc, contentField)
+      // Deep clone for mutation
+      const docClone = JSON.parse(JSON.stringify(doc))
+
+      // Extract text WITH sources from the clone
+      // Uses the SAME function as scan → guaranteed offset alignment
+      const { fullText, segments } = extractAllTextFromDocWithSources(docClone, contentField)
 
       let result: { fixed: boolean; modifiedField: string | null }
 
       if (typeof offset === 'number' && typeof length === 'number') {
-        // v0.8.0: offset-based targeting (precise)
-        result = applyFixAtOffset(entries, offset, length, original, replacement)
-
-        // Handle title fix (special case — needs direct docClone mutation)
-        if (result.modifiedField === '__title__') {
-          const titleEntry = entries.find((e) => e.source.type === 'title')
-          if (titleEntry) {
-            // Recalculate localOffset for title
-            const localOffset = offset // title is always at position 0
-            docClone.title = (docClone.title as string).slice(0, localOffset)
-              + replacement
-              + (docClone.title as string).slice(localOffset + length)
-          }
-          result.modifiedField = 'title'
+        // Verify the text at the offset matches what LanguageTool reported
+        const actual = fullText.slice(offset, offset + length)
+        if (actual !== original) {
+          console.warn(
+            `[spellcheck/fix] Text mismatch at offset ${offset}: expected "${original}", found "${actual}"`,
+          )
+          // Document may have changed since scan — fall back to legacy
+          result = legacyFixSubstring(docClone, original, replacement, contentField)
+        } else {
+          // Offset verified — apply fix to the correct segment
+          result = applyFixAtOffset(segments, fullText, offset, length, replacement, docClone)
         }
 
-        // If offset-based fix failed, fall back to legacy
+        // If offset-based fix failed internally, fall back to legacy
         if (!result.fixed) {
           console.warn('[spellcheck/fix] Offset-based fix failed, trying legacy substring search')
           result = legacyFixSubstring(docClone, original, replacement, contentField)
         }
       } else {
-        // Legacy: substring-based (for backwards compatibility)
+        // No offset — legacy substring-based fix
         result = legacyFixSubstring(docClone, original, replacement, contentField)
       }
 
