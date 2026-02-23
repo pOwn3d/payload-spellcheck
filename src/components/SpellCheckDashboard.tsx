@@ -335,6 +335,12 @@ export const SpellCheckDashboard: React.FC = () => {
         } else if (data.status === 'error') {
           setScanProgress(`Erreur : ${data.error || 'Erreur inconnue'}`)
           setScanning(false)
+          loadResults()
+        } else if (data.status === 'idle') {
+          // Job was auto-reset or never started
+          setScanProgress('')
+          setScanning(false)
+          loadResults()
         }
       } catch {
         // Ignore polling errors
@@ -360,6 +366,25 @@ export const SpellCheckDashboard: React.FC = () => {
         }
       })
       .catch(() => { /* ignore */ })
+  }, [])
+
+  // Force-reset a stuck scan
+  const handleForceReset = useCallback(async () => {
+    try {
+      const res = await fetch('/api/spellcheck/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      })
+      if (res.ok) {
+        setScanning(true)
+        setScanCurrent(0)
+        setScanTotal(0)
+        setScanProgress('Scan précédent réinitialisé, redémarrage...')
+      }
+    } catch {
+      setScanProgress('Erreur réseau')
+    }
   }, [])
 
   // Bulk scan (all or selected)
@@ -389,6 +414,8 @@ export const SpellCheckDashboard: React.FC = () => {
         setScanProgress('Analyse en cours... 0/? — démarrage')
       } else if (res.status === 409) {
         setScanProgress('Une analyse est déjà en cours...')
+        // Offer force reset after 409
+        setScanning(false)
       } else {
         setScanProgress('Erreur lors du lancement de l\'analyse')
         setScanning(false)
@@ -861,7 +888,28 @@ export const SpellCheckDashboard: React.FC = () => {
 
           {scanProgress && (
             <div style={styles.progress}>
-              <div>{scanProgress}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{scanProgress}</span>
+                {scanProgress.includes('déjà en cours') && !scanning && (
+                  <button
+                    type="button"
+                    onClick={handleForceReset}
+                    style={{
+                      padding: '4px 12px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      border: 'none',
+                      borderRadius: '4px',
+                      backgroundColor: 'var(--theme-error-500)',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      marginLeft: '12px',
+                    }}
+                  >
+                    Forcer réinitialisation
+                  </button>
+                )}
+              </div>
               {scanning && scanTotal > 0 && (
                 <div style={styles.progressBar}>
                   <div style={styles.progressFill(Math.round((scanCurrent / scanTotal) * 100))} />
