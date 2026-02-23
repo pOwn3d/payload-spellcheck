@@ -347,21 +347,32 @@ export function createFixHandler(
 
       const contentField = field || pluginConfig.contentField || 'content'
 
-      // Fetch the document (depth:0, draft:true — must match bulk.ts for offset alignment)
-      const doc = await req.payload.findByID({
+      // Use payload.find() — NOT findByID() — to match bulk.ts exactly.
+      // In Payload + SQLite, blocks are in separate tables. find() and findByID()
+      // can return different document structures (missing blocks, different JOINs),
+      // causing text extraction to differ and offset mismatches.
+      const findResult = await req.payload.find({
         collection,
-        id,
+        where: { id: { equals: id } },
+        limit: 1,
         depth: 0,
         draft: true,
         overrideAccess: true,
       })
 
-      // Deep clone for mutation
-      const docClone = JSON.parse(JSON.stringify(doc))
+      if (!findResult.docs.length) {
+        return Response.json({ error: 'Document not found' }, { status: 404 })
+      }
 
-      // Extract text WITH sources from the clone
-      // Uses the SAME function as scan → guaranteed offset alignment
-      const { fullText, segments } = extractAllTextFromDocWithSources(docClone, contentField)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const doc = findResult.docs[0] as any
+
+      // Extract text WITH sources directly from the fetched doc.
+      // NO deep clone — JSON.parse(JSON.stringify()) loses content from
+      // Payload's document objects (getters, lazy-parsed JSON fields, etc.),
+      // causing the extracted text to differ from what bulk.ts sees.
+      // findByID() returns a fresh copy from the database, safe to mutate.
+      const { fullText, segments } = extractAllTextFromDocWithSources(doc, contentField)
 
       let result: { fixed: boolean; modifiedField: string | null }
       let method = 'legacy'
@@ -371,23 +382,19 @@ export function createFixHandler(
 
         if (actual === original) {
           // Exact offset match — apply fix directly
-          result = applyFixAtOffset(segments, fullText, offset, length, replacement, docClone)
+          result = applyFixAtOffset(segments, fullText, offset, length, replacement, doc)
           method = 'offset'
         } else {
-          // Offset drift detected — search for the original text near the expected offset.
-          // This handles cases where payload.find() and payload.findByID() return documents
-          // with different field ordering, causing extractAllTextFromDocWithSources to produce
-          // the same content but in a different order → offset shift.
+          // Offset drift — search for the original text near the expected offset
           const foundOffset = findClosestMatch(fullText, original, offset)
 
           if (foundOffset >= 0) {
             console.log(
               `[spellcheck/fix] Offset drift corrected: "${original}" at ${foundOffset} (stored: ${offset}, drift: ${foundOffset - offset})`,
             )
-            result = applyFixAtOffset(segments, fullText, foundOffset, original.length, replacement, docClone)
+            result = applyFixAtOffset(segments, fullText, foundOffset, original.length, replacement, doc)
             method = 'search'
           } else {
-            // Original text not found in fullText at all
             console.warn(
               `[spellcheck/fix] "${original}" not found in extracted text (${fullText.length} chars)`,
             )
@@ -395,14 +402,13 @@ export function createFixHandler(
           }
         }
 
-        // If offset/search-based fix failed, fall back to legacy substring search
+        // If offset/search-based fix failed, fall back to legacy
         if (!result.fixed) {
-          result = legacyFixSubstring(docClone, original, replacement, contentField)
+          result = legacyFixSubstring(doc, original, replacement, contentField)
           if (result.fixed) method = 'legacy'
         }
       } else {
-        // No offset provided — legacy substring-based fix
-        result = legacyFixSubstring(docClone, original, replacement, contentField)
+        result = legacyFixSubstring(doc, original, replacement, contentField)
       }
 
       if (!result.fixed || !result.modifiedField) {
@@ -420,17 +426,16 @@ export function createFixHandler(
 
       switch (result.modifiedField) {
         case 'title':
-          updateData.title = docClone.title
+          updateData.title = doc.title
           break
         case 'hero':
-          updateData.hero = docClone.hero
+          updateData.hero = doc.hero
           break
         case 'layout':
-          updateData.layout = docClone.layout
+          updateData.layout = doc.layout
           break
         default:
-          // Content field or other
-          updateData[result.modifiedField] = docClone[result.modifiedField]
+          updateData[result.modifiedField] = doc[result.modifiedField]
           break
       }
 
