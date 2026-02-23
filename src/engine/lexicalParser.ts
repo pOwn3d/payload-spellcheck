@@ -63,7 +63,7 @@ export function extractAllTextFromDoc(
     }
   }
 
-  return stripHtml(texts.filter(Boolean).join('\n').trim())
+  return texts.filter(Boolean).join('\n').trim()
 }
 
 /**
@@ -191,23 +191,10 @@ function extractRecursive(
   return text
 }
 
-/**
- * Strip any residual HTML tags from extracted text.
- * Safety measure in case HTML leaks through Lexical or plain text fields.
- *
- * IMPORTANT: Does NOT collapse multiple spaces — LanguageTool offsets must
- * match the raw document text exactly for the fix endpoint to work.
- */
-function stripHtml(text: string): string {
-  return text
-    .replace(/<[^>]+>/g, ' ')  // Remove HTML tags
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/&#?\w+;/g, '')   // Remove remaining HTML entities
-}
+// stripHtml removed in v0.9.5 — Lexical stores plain text (not HTML).
+// The old regex /<[^>]+>/g falsely matched content like "<link rel=preload>"
+// (code examples) and "< 3 000 €" (comparisons), causing offset drift
+// between extractAllTextFromDoc and the fix endpoint's buildDocumentEntries.
 
 /**
  * Count words in extracted text.
