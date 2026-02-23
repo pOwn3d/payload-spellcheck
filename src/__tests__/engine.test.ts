@@ -123,6 +123,7 @@ describe('filterFalsePositives', () => {
     category: 'GRAMMAR',
     message: 'Test issue',
     context: 'test context',
+    contextOffset: 0,
     offset: 0,
     length: 4,
     original: 'test',
@@ -136,39 +137,39 @@ describe('filterFalsePositives', () => {
     customDictionary: ['TypeScript', 'Payload'],
   }
 
-  it('should filter premium rules', () => {
+  it('should filter premium rules', async () => {
     const issues = [{ ...baseIssue, isPremium: true }]
-    expect(filterFalsePositives(issues, config)).toHaveLength(0)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(0)
   })
 
-  it('should filter default skip rules', () => {
+  it('should filter default skip rules', async () => {
     const issues = [{ ...baseIssue, ruleId: 'WHITESPACE_RULE' }]
-    expect(filterFalsePositives(issues, config)).toHaveLength(0)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(0)
   })
 
-  it('should filter custom skip rules', () => {
+  it('should filter custom skip rules', async () => {
     const issues = [{ ...baseIssue, ruleId: 'CUSTOM_SKIP_RULE' }]
-    expect(filterFalsePositives(issues, config)).toHaveLength(0)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(0)
   })
 
-  it('should filter skip categories', () => {
+  it('should filter skip categories', async () => {
     const issues = [{ ...baseIssue, category: 'STYLE' }]
-    expect(filterFalsePositives(issues, config)).toHaveLength(0)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(0)
   })
 
-  it('should filter custom dictionary words', () => {
+  it('should filter custom dictionary words', async () => {
     const issues = [{ ...baseIssue, original: 'TypeScript' }]
-    expect(filterFalsePositives(issues, config)).toHaveLength(0)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(0)
   })
 
-  it('should keep valid issues', () => {
+  it('should keep valid issues', async () => {
     const issues = [baseIssue]
-    expect(filterFalsePositives(issues, config)).toHaveLength(1)
+    expect(await filterFalsePositives(issues, config)).toHaveLength(1)
   })
 
-  it('should handle empty config', () => {
+  it('should handle empty config', async () => {
     const issues = [baseIssue]
-    expect(filterFalsePositives(issues, {})).toHaveLength(1)
+    expect(await filterFalsePositives(issues, {})).toHaveLength(1)
   })
 })
 

@@ -11,31 +11,11 @@
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
 import { extractTextFromLexical, extractAllTextFromDoc } from '../engine/lexicalParser.js'
-
-interface LexicalNode {
-  type?: string
-  text?: string
-  children?: LexicalNode[]
-  root?: LexicalNode
-  [key: string]: unknown
-}
-
-const SKIP_TYPES = new Set(['code', 'code-block', 'codeBlock'])
+import { type LexicalNode, SKIP_TYPES, SKIP_KEYS, PLAIN_TEXT_KEYS, isLexicalJson } from '../engine/shared.js'
 
 /** Escape special regex characters in a literal string */
 function escapeRegexLiteral(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-// ─── Text extraction helpers (mirror lexicalParser.ts) ──────────────────
-
-function isLexicalJson(value: unknown): value is LexicalNode {
-  if (!value || typeof value !== 'object') return false
-  const obj = value as Record<string, unknown>
-  return Boolean(
-    (obj.root && typeof obj.root === 'object') ||
-    (Array.isArray(obj.children) && obj.type !== undefined),
-  )
 }
 
 // ─── Offset-based Lexical tree fix ──────────────────────────────────────
@@ -130,20 +110,6 @@ interface TextEntry {
     | { type: 'lexical'; data: LexicalNode; topField: string }
     | { type: 'plain'; parent: Record<string, unknown>; key: string; topField: string }
 }
-
-const SKIP_KEYS = new Set([
-  'id', '_order', '_parent_id', '_path', '_locale', '_uuid',
-  'blockType', 'blockName', 'icon', 'color', 'link', 'link_url',
-  'enable_link', 'image', 'media', 'form', 'form_id', 'rating',
-  'size', 'position', 'relationTo', 'value', 'updatedAt', 'createdAt',
-  '_status', 'slug', 'meta', 'publishedAt', 'populatedAuthors',
-])
-
-const PLAIN_TEXT_KEYS = new Set([
-  'title', 'description', 'heading', 'subheading', 'subtitle',
-  'quote', 'author', 'role', 'label', 'link_label', 'block_name',
-  'caption', 'alt', 'text', 'summary', 'excerpt',
-])
 
 /**
  * Collect text entries from a block (mirrors extractTextFromBlock from lexicalParser.ts).

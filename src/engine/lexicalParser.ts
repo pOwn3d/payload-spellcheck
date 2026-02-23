@@ -4,29 +4,7 @@
  * and skipping code blocks.
  */
 
-interface LexicalNode {
-  type?: string
-  text?: string
-  children?: LexicalNode[]
-  root?: LexicalNode
-  tag?: string
-  [key: string]: unknown
-}
-
-/** Node types to skip (their text content is not natural language) */
-const SKIP_TYPES = new Set(['code', 'code-block', 'codeBlock'])
-
-/**
- * Check if a value looks like a Lexical JSON structure (has root.children).
- */
-function isLexicalJson(value: unknown): value is LexicalNode {
-  if (!value || typeof value !== 'object') return false
-  const obj = value as Record<string, unknown>
-  return Boolean(
-    (obj.root && typeof obj.root === 'object') ||
-    (Array.isArray(obj.children) && obj.type !== undefined),
-  )
-}
+import { type LexicalNode, SKIP_TYPES, SKIP_KEYS, PLAIN_TEXT_KEYS, isLexicalJson } from './shared.js'
 
 /**
  * Extract all text from a document object by deeply traversing all properties.
@@ -89,17 +67,8 @@ function extractTextFromBlock(
 
   const record = obj as Record<string, unknown>
 
-  // Skip non-content fields
-  const skipKeys = new Set([
-    'id', '_order', '_parent_id', '_path', '_locale', '_uuid',
-    'blockType', 'blockName', 'icon', 'color', 'link', 'link_url',
-    'enable_link', 'image', 'media', 'form', 'form_id', 'rating',
-    'size', 'position', 'relationTo', 'value', 'updatedAt', 'createdAt',
-    '_status', 'slug', 'meta', 'publishedAt', 'populatedAuthors',
-  ])
-
   for (const [key, value] of Object.entries(record)) {
-    if (skipKeys.has(key)) continue
+    if (SKIP_KEYS.has(key)) continue
 
     // Lexical JSON field
     if (isLexicalJson(value)) {
@@ -113,9 +82,7 @@ function extractTextFromBlock(
       if (/^(https?:|\/|#|\d{4}-\d{2}|[0-9a-f-]{36}|data:|mailto:)/i.test(value)) continue
       if (/^\{.*\}$/.test(value) || /^\[.*\]$/.test(value)) continue
       // Only include fields that look like natural language
-      if (['title', 'description', 'heading', 'subheading', 'subtitle',
-           'quote', 'author', 'role', 'label', 'link_label', 'block_name',
-           'caption', 'alt', 'text', 'summary', 'excerpt'].includes(key)) {
+      if (PLAIN_TEXT_KEYS.has(key)) {
         texts.push(value)
       }
     }

@@ -15,7 +15,7 @@ export function createSpellCheckResultsCollection(): CollectionConfig {
       read: ({ req }) => !!req.user,
       create: ({ req }) => !!req.user,
       update: ({ req }) => !!req.user,
-      delete: ({ req }) => req.user?.role === 'admin',
+      delete: ({ req }) => !!req.user,
     },
     timestamps: false,
     fields: [
