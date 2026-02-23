@@ -5,7 +5,8 @@ export type {
   SpellCheckIssue,
   SpellCheckResult,
 } from './types.js'
-export { extractTextFromLexical, extractAllTextFromDoc, countWords } from './engine/lexicalParser.js'
+export { extractTextFromLexical, extractAllTextFromDoc, extractAllTextFromDocWithSources, countWords } from './engine/lexicalParser.js'
+export type { TextSegment, ExtractedDoc } from './engine/lexicalParser.js'
 export { checkWithLanguageTool } from './engine/languagetool.js'
 export { checkWithClaude } from './engine/claude.js'
 export { filterFalsePositives, calculateScore } from './engine/filters.js'

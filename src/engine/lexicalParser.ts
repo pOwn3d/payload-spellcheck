@@ -2,56 +2,102 @@
  * Extract plain text from Lexical JSON nodes.
  * Recursively traverses the Lexical AST, extracting text nodes
  * and skipping code blocks.
+ *
+ * v0.9.8: Single source of truth for text extraction.
+ * extractAllTextFromDocWithSources() returns both the text AND source
+ * references, used by scan (validate/bulk) and fix endpoints.
+ * This eliminates offset divergence between scan and fix.
  */
 
 import { type LexicalNode, SKIP_TYPES, SKIP_KEYS, PLAIN_TEXT_KEYS, isLexicalJson } from './shared.js'
 
+// ─── Types ──────────────────────────────────────────────────────────────
+
+export interface TextSegment {
+  text: string
+  source:
+    | { type: 'title' }
+    | { type: 'lexical'; data: LexicalNode; topField: string }
+    | { type: 'plain'; parent: Record<string, unknown>; key: string; topField: string }
+}
+
+export interface ExtractedDoc {
+  /** Full text sent to LanguageTool (segments joined by \n, trimmed) */
+  fullText: string
+  /** Individual text segments with source references (for fix mutation) */
+  segments: TextSegment[]
+}
+
+// ─── Unified extraction ─────────────────────────────────────────────────
+
 /**
- * Extract all text from a document object by deeply traversing all properties.
- * Finds all Lexical JSON fields and plain text fields automatically.
- * Returns a single string with all extracted text.
+ * Extract all text from a document with source tracking.
+ * Single source of truth — used by scan (validate/bulk) and fix endpoints.
+ */
+export function extractAllTextFromDocWithSources(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  doc: any,
+  contentField = 'content',
+): ExtractedDoc {
+  const rawSegments: TextSegment[] = []
+  const visited = new WeakSet<object>()
+
+  // 1. Title
+  if (doc.title && typeof doc.title === 'string') {
+    rawSegments.push({ text: doc.title, source: { type: 'title' } })
+  }
+
+  // 2. Hero richText
+  if (doc.hero?.richText) {
+    rawSegments.push({
+      text: extractTextFromLexical(doc.hero.richText),
+      source: { type: 'lexical', data: doc.hero.richText, topField: 'hero' },
+    })
+  }
+
+  // 3. Content field
+  if (doc[contentField] && isLexicalJson(doc[contentField])) {
+    rawSegments.push({
+      text: extractTextFromLexical(doc[contentField]),
+      source: { type: 'lexical', data: doc[contentField], topField: contentField },
+    })
+  }
+
+  // 4. Layout blocks
+  if (Array.isArray(doc.layout)) {
+    for (const block of doc.layout) {
+      extractBlockSegments(block, rawSegments, visited, 'layout')
+    }
+  }
+
+  // Filter empty segments + build fullText (identical logic for scan and fix)
+  const segments = rawSegments.filter((s) => Boolean(s.text))
+  const fullText = segments.map((s) => s.text).join('\n').trim()
+
+  return { fullText, segments }
+}
+
+/**
+ * Extract all plain text from a document (convenience wrapper).
+ * Delegates to extractAllTextFromDocWithSources for consistency.
  */
 export function extractAllTextFromDoc(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doc: any,
   contentField = 'content',
 ): string {
-  const texts: string[] = []
-  const visited = new WeakSet<object>()
-
-  // Always extract title first
-  if (doc.title && typeof doc.title === 'string') {
-    texts.push(doc.title)
-  }
-
-  // Extract hero richText
-  if (doc.hero?.richText) {
-    texts.push(extractTextFromLexical(doc.hero.richText))
-  }
-
-  // Extract main content field
-  if (doc[contentField] && isLexicalJson(doc[contentField])) {
-    texts.push(extractTextFromLexical(doc[contentField]))
-  }
-
-  // Deep traverse layout blocks
-  if (Array.isArray(doc.layout)) {
-    for (const block of doc.layout) {
-      extractTextFromBlock(block, texts, visited)
-    }
-  }
-
-  return texts.filter(Boolean).join('\n').trim()
+  return extractAllTextFromDocWithSources(doc, contentField).fullText
 }
 
 /**
- * Recursively extract text from a block structure.
+ * Recursively extract text segments from a block structure.
  * Handles richText (Lexical), plain text fields, and nested arrays/objects.
  */
-function extractTextFromBlock(
+function extractBlockSegments(
   obj: unknown,
-  texts: string[],
+  segments: TextSegment[],
   visited: WeakSet<object>,
+  topField: string,
   depth = 0,
 ): void {
   if (!obj || typeof obj !== 'object' || depth > 10) return
@@ -60,7 +106,7 @@ function extractTextFromBlock(
 
   if (Array.isArray(obj)) {
     for (const item of obj) {
-      extractTextFromBlock(item, texts, visited, depth + 1)
+      extractBlockSegments(item, segments, visited, topField, depth + 1)
     }
     return
   }
@@ -72,7 +118,10 @@ function extractTextFromBlock(
 
     // Lexical JSON field
     if (isLexicalJson(value)) {
-      texts.push(extractTextFromLexical(value))
+      segments.push({
+        text: extractTextFromLexical(value),
+        source: { type: 'lexical', data: value as LexicalNode, topField },
+      })
       continue
     }
 
@@ -83,20 +132,25 @@ function extractTextFromBlock(
       if (/^\{.*\}$/.test(value) || /^\[.*\]$/.test(value)) continue
       // Only include fields that look like natural language
       if (PLAIN_TEXT_KEYS.has(key)) {
-        texts.push(value)
+        segments.push({
+          text: value,
+          source: { type: 'plain', parent: record, key, topField },
+        })
       }
     }
 
     // Recurse into nested objects/arrays
     if (typeof value === 'object' && value !== null) {
-      extractTextFromBlock(value, texts, visited, depth + 1)
+      extractBlockSegments(value, segments, visited, topField, depth + 1)
     }
   }
 }
 
+// ─── Lexical extraction ─────────────────────────────────────────────────
+
 /**
  * Extract all plain text from a Lexical JSON structure.
- * Returns a single string with text nodes separated by spaces.
+ * Returns a single string with text nodes separated by newlines.
  */
 export function extractTextFromLexical(
   node: unknown,
@@ -158,10 +212,7 @@ function extractRecursive(
   return text
 }
 
-// stripHtml removed in v0.9.5 — Lexical stores plain text (not HTML).
-// The old regex /<[^>]+>/g falsely matched content like "<link rel=preload>"
-// (code examples) and "< 3 000 €" (comparisons), causing offset drift
-// between extractAllTextFromDoc and the fix endpoint's buildDocumentEntries.
+// ─── Utilities ──────────────────────────────────────────────────────────
 
 /**
  * Count words in extracted text.
