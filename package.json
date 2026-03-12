@@ -1,6 +1,6 @@
 {
   "name": "@consilioweb/spellcheck",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Payload CMS spellcheck plugin — LanguageTool + Claude AI fallback, dashboard, sidebar field, auto-check on save",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -60,17 +60,31 @@
     "spelling",
     "grammar",
     "languagetool",
+    "claude-ai",
     "payload",
     "payload-cms",
     "payload-plugin",
+    "payload-cms-3",
     "lexical",
+    "richtext",
     "i18n",
     "french",
-    "typescript"
+    "english",
+    "readability",
+    "consistency",
+    "bulk-scan",
+    "auto-fix",
+    "dictionary",
+    "typescript",
+    "nextjs"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pOwn3d/payload-spellcheck.git"
+  },
+  "homepage": "https://github.com/pOwn3d/payload-spellcheck#readme",
+  "bugs": {
+    "url": "https://github.com/pOwn3d/payload-spellcheck/issues"
   },
   "author": "ConsilioWEB <contact@consilioweb.fr> (https://consilioweb.fr)",
   "license": "MIT",

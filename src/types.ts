@@ -2,6 +2,9 @@
  * Spellcheck Plugin — Type definitions.
  */
 
+import type { ReadabilityResult } from './engine/readability.js'
+import type { ConsistencyIssue } from './engine/consistency.js'
+
 export interface SpellCheckIssue {
   /** LanguageTool rule ID (e.g. 'GRAMMAR', 'MORFOLOGIK_RULE_FR') */
   ruleId: string
@@ -40,6 +43,10 @@ export interface SpellCheckResult {
   wordCount: number
   /** Detailed issues */
   issues: SpellCheckIssue[]
+  /** Readability analysis results */
+  readability?: ReadabilityResult
+  /** Consistency check results */
+  consistency?: ConsistencyIssue[]
   /** ISO date of last check */
   lastChecked: string
 }

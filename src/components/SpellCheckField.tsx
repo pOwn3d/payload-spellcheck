@@ -13,6 +13,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useDocumentInfo } from '@payloadcms/ui'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
+import type { ReadabilityResult } from '../engine/readability.js'
 
 const styles = {
   container: {
@@ -87,11 +88,53 @@ const styles = {
     borderRadius: '4px',
     marginBottom: '12px',
   } as React.CSSProperties,
+  readability: {
+    padding: '8px',
+    marginBottom: '12px',
+    borderRadius: '4px',
+    backgroundColor: 'var(--theme-elevation-50)',
+    border: '1px solid var(--theme-elevation-150)',
+  } as React.CSSProperties,
+  readabilityHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '4px',
+  } as React.CSSProperties,
+  readabilityLabel: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: 'var(--theme-elevation-500)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+  } as React.CSSProperties,
+  readabilityScore: (score: number) => ({
+    fontSize: '13px',
+    fontWeight: 700,
+    padding: '2px 8px',
+    borderRadius: '10px',
+    color: '#fff',
+    backgroundColor: score >= 60 ? 'var(--theme-success-500)'
+      : score >= 40 ? '#f59e0b'
+      : 'var(--theme-error-500)',
+  }) as React.CSSProperties,
+  readabilityGrade: {
+    fontSize: '12px',
+    color: 'var(--theme-text)',
+    marginBottom: '4px',
+  } as React.CSSProperties,
+  readabilityDetails: {
+    fontSize: '11px',
+    color: 'var(--theme-elevation-500)',
+    display: 'flex',
+    justifyContent: 'space-between',
+  } as React.CSSProperties,
 }
 
 export const SpellCheckField: React.FC = () => {
   const { id, collectionSlug } = useDocumentInfo()
   const [result, setResult] = useState<SpellCheckResult | null>(null)
+  const [readability, setReadability] = useState<ReadabilityResult | null>(null)
   const [resultDbId, setResultDbId] = useState<string | number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,6 +163,9 @@ export const SpellCheckField: React.FC = () => {
             issues: (data.docs[0].issues || []) as SpellCheckIssue[],
             lastChecked: data.docs[0].lastChecked,
           })
+          if (data.docs[0].readability) {
+            setReadability(data.docs[0].readability as ReadabilityResult)
+          }
         }
       })
       .catch(() => { /* ignore */ })
@@ -143,8 +189,11 @@ export const SpellCheckField: React.FC = () => {
         throw new Error(err.error || `HTTP ${res.status}`)
       }
 
-      const data = (await res.json()) as SpellCheckResult
+      const data = (await res.json()) as SpellCheckResult & { readability?: ReadabilityResult }
       setResult(data)
+      if (data.readability) {
+        setReadability(data.readability)
+      }
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -223,6 +272,20 @@ export const SpellCheckField: React.FC = () => {
       </button>
 
       {error && <div style={styles.error}>{error}</div>}
+
+      {readability && (
+        <div style={styles.readability}>
+          <div style={styles.readabilityHeader}>
+            <span style={styles.readabilityLabel}>Lisibilité</span>
+            <span style={styles.readabilityScore(readability.score)}>{readability.score}</span>
+          </div>
+          <div style={styles.readabilityGrade}>{readability.grade}</div>
+          <div style={styles.readabilityDetails}>
+            <span>{readability.avgSentenceLength} mots/phrase</span>
+            <span>{readability.avgSyllablesPerWord} syll./mot</span>
+          </div>
+        </div>
+      )}
 
       {result && (
         <>

@@ -93,6 +93,20 @@ export function createSpellCheckResultsCollection(): CollectionConfig {
         },
       },
       {
+        name: 'readability',
+        type: 'json',
+        admin: {
+          description: 'Readability analysis result (score, grade, avgSentenceLength, etc.)',
+        },
+      },
+      {
+        name: 'consistency',
+        type: 'json',
+        admin: {
+          description: 'JSON array of ConsistencyIssue objects (term variants)',
+        },
+      },
+      {
         name: 'lastChecked',
         type: 'date',
         required: true,

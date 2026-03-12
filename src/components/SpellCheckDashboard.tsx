@@ -9,6 +9,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
+import type { ReadabilityResult } from '../engine/readability.js'
 
 interface StoredResult {
   id: string | number
@@ -20,6 +21,7 @@ interface StoredResult {
   issueCount: number
   wordCount: number
   issues: SpellCheckIssue[]
+  readability?: ReadabilityResult | null
   lastChecked: string
 }
 
@@ -149,6 +151,17 @@ const styles = {
     color: '#fff',
     backgroundColor: score >= 95 ? 'var(--theme-success-500)'
       : score >= 80 ? '#f59e0b'
+      : 'var(--theme-error-500)',
+  }) as React.CSSProperties,
+  readabilityBadge: (score: number) => ({
+    display: 'inline-block',
+    fontSize: '12px',
+    fontWeight: 700,
+    padding: '2px 8px',
+    borderRadius: '10px',
+    color: '#fff',
+    backgroundColor: score >= 60 ? 'var(--theme-success-500)'
+      : score >= 40 ? '#f59e0b'
       : 'var(--theme-error-500)',
   }) as React.CSSProperties,
   expandedRow: {
@@ -651,6 +664,7 @@ export const SpellCheckDashboard: React.FC = () => {
     issueCount: number
     wordCount: number
     issues: SpellCheckIssue[]
+    readability: ReadabilityResult | null
     lastChecked: string | null
     resultId: string | number | null
   }
@@ -676,6 +690,7 @@ export const SpellCheckDashboard: React.FC = () => {
         issueCount: existing?.issueCount ?? 0,
         wordCount: existing?.wordCount ?? 0,
         issues: (existing?.issues ?? []) as SpellCheckIssue[],
+        readability: (existing?.readability as ReadabilityResult) ?? null,
         lastChecked: existing?.lastChecked ?? null,
         resultId: existing?.id ?? null,
       })
@@ -693,6 +708,7 @@ export const SpellCheckDashboard: React.FC = () => {
           issueCount: r.issueCount,
           wordCount: r.wordCount,
           issues: r.issues,
+          readability: (r.readability as ReadabilityResult) ?? null,
           lastChecked: r.lastChecked,
           resultId: r.id,
         })
@@ -733,6 +749,10 @@ export const SpellCheckDashboard: React.FC = () => {
   const avgScore = scannedResults.length > 0
     ? Math.round(scannedResults.reduce((sum, r) => sum + r.score, 0) / scannedResults.length)
     : 0
+  const readabilityResults = scannedResults.filter((r) => r.readability && typeof (r.readability as ReadabilityResult).score === 'number')
+  const avgReadability = readabilityResults.length > 0
+    ? Math.round(readabilityResults.reduce((sum, r) => sum + ((r.readability as ReadabilityResult).score || 0), 0) / readabilityResults.length)
+    : null
 
   const sortIndicator = (key: SortKey) => {
     if (sortKey !== key) return ''
@@ -972,6 +992,19 @@ export const SpellCheckDashboard: React.FC = () => {
                   {results.filter((r) => r.issueCount === 0).length}
                 </div>
               </div>
+              {avgReadability !== null && (
+                <div style={styles.summaryCard}>
+                  <div style={styles.summaryLabel}>Lisibilité moy.</div>
+                  <div style={{
+                    ...styles.summaryValue,
+                    color: avgReadability >= 60 ? 'var(--theme-success-500)'
+                      : avgReadability >= 40 ? '#f59e0b'
+                      : 'var(--theme-error-500)',
+                  }}>
+                    {avgReadability}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1006,6 +1039,7 @@ export const SpellCheckDashboard: React.FC = () => {
                   <th style={styles.th} onClick={() => handleSort('wordCount')}>
                     Mots{sortIndicator('wordCount')}
                   </th>
+                  <th style={styles.th}>Lisibilité</th>
                   <th style={styles.th} onClick={() => handleSort('lastChecked')}>
                     Vérifié{sortIndicator('lastChecked')}
                   </th>
@@ -1060,6 +1094,18 @@ export const SpellCheckDashboard: React.FC = () => {
                         <td style={styles.td}>{r.lastChecked ? r.issueCount : '—'}</td>
                         <td style={styles.td}>{r.wordCount || '—'}</td>
                         <td style={styles.td}>
+                          {r.readability ? (
+                            <span
+                              style={styles.readabilityBadge(r.readability.score)}
+                              title={r.readability.grade}
+                            >
+                              {r.readability.score}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '11px', color: 'var(--theme-elevation-400)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={styles.td}>
                           {r.lastChecked
                             ? new Date(r.lastChecked).toLocaleString('fr-FR', {
                                 day: '2-digit',
@@ -1073,7 +1119,7 @@ export const SpellCheckDashboard: React.FC = () => {
                       </tr>
                       {expandedId === rowKey && r.issues && r.issues.length > 0 && (
                         <tr>
-                          <td colSpan={7} style={styles.expandedRow}>
+                          <td colSpan={8} style={styles.expandedRow}>
                             {(r.issues as SpellCheckIssue[]).map((issue, i) => (
                               <IssueCard
                                 key={`${issue.ruleId}-${issue.offset}-${i}`}

@@ -7,6 +7,9 @@
 
 import type { PayloadHandler } from 'payload'
 
+/** Maximum word length allowed in the dictionary */
+const MAX_WORD_LENGTH = 100
+
 /**
  * GET — list all dictionary words sorted alphabetically.
  */
@@ -29,8 +32,9 @@ export function createDictionaryListHandler(): PayloadHandler {
         count: result.totalDocs,
       })
     } catch (error) {
-      console.error('[spellcheck/dictionary] List error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/dictionary] List error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }
@@ -50,12 +54,26 @@ export function createDictionaryAddHandler(): PayloadHandler {
       const body = await (req as any).json().catch(() => ({}))
       const { word, words } = body as { word?: string; words?: string[] }
 
+      // Input validation: word must be a non-empty string
+      if (word !== undefined && (typeof word !== 'string' || !word.trim())) {
+        return Response.json({ error: 'word must be a non-empty string' }, { status: 400 })
+      }
+
       const wordsToAdd: string[] = []
       if (word) wordsToAdd.push(word)
       if (Array.isArray(words)) wordsToAdd.push(...words)
 
       if (wordsToAdd.length === 0) {
         return Response.json({ error: 'Provide { word } or { words: [] }' }, { status: 400 })
+      }
+
+      // Validate word lengths before processing
+      const tooLong = wordsToAdd.filter((w) => w.trim().length > MAX_WORD_LENGTH)
+      if (tooLong.length > 0) {
+        return Response.json(
+          { error: `Word(s) exceed maximum length of ${MAX_WORD_LENGTH} characters: ${tooLong.map((w) => `"${w.trim().slice(0, 20)}…"`).join(', ')}` },
+          { status: 400 },
+        )
       }
 
       const added: string[] = []
@@ -99,8 +117,9 @@ export function createDictionaryAddHandler(): PayloadHandler {
 
       return Response.json({ added, skipped, count: added.length })
     } catch (error) {
-      console.error('[spellcheck/dictionary] Add error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/dictionary] Add error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }
@@ -118,7 +137,7 @@ export function createDictionaryDeleteHandler(): PayloadHandler {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
-      const { id: bodyId, ids } = body as { id?: string; ids?: string[] }
+      const { id: bodyId, ids, word } = body as { id?: string; ids?: string[]; word?: string }
 
       // Also accept ?id=xxx in query string (for simple DELETE requests)
       const url = new URL(req.url || '', 'http://localhost')
@@ -129,8 +148,21 @@ export function createDictionaryDeleteHandler(): PayloadHandler {
       if (queryId) idsToDelete.push(queryId)
       if (Array.isArray(ids)) idsToDelete.push(...ids)
 
+      // Support deleting by word (lookup ID first)
+      if (word && typeof word === 'string' && word.trim()) {
+        const found = await req.payload.find({
+          collection: 'spellcheck-dictionary',
+          where: { word: { equals: word.trim().toLowerCase() } },
+          limit: 1,
+          overrideAccess: true,
+        })
+        if (found.docs.length > 0) {
+          idsToDelete.push(String(found.docs[0].id))
+        }
+      }
+
       if (idsToDelete.length === 0) {
-        return Response.json({ error: 'Provide { id } or { ids: [] }' }, { status: 400 })
+        return Response.json({ error: 'Provide { id }, { ids: [] }, or { word }' }, { status: 400 })
       }
 
       let deleted = 0
@@ -152,8 +184,9 @@ export function createDictionaryDeleteHandler(): PayloadHandler {
 
       return Response.json({ deleted })
     } catch (error) {
-      console.error('[spellcheck/dictionary] Delete error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/dictionary] Delete error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }

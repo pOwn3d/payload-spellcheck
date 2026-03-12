@@ -35,8 +35,9 @@ export function createSpellCheckDictionaryCollection(): CollectionConfig {
         required: true,
         unique: true,
         index: true,
+        maxLength: 100,
         admin: {
-          description: 'Dictionary word (auto-lowercased)',
+          description: 'Dictionary word (auto-lowercased, max 100 chars)',
         },
       },
       {

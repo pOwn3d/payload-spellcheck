@@ -205,10 +205,10 @@ async function runBulkScan(
               })
             }
           } catch (err) {
-            console.error(`[spellcheck/bulk] Failed to store result for ${docTitle}:`, err)
+            payload.logger.error(`[spellcheck/bulk] Failed to store result for ${docTitle}: ${err instanceof Error ? err.message : err}`)
           }
         } catch (docErr) {
-          console.error(`[spellcheck/bulk] Error processing "${docTitle}":`, docErr)
+          payload.logger.error(`[spellcheck/bulk] Error processing "${docTitle}": ${docErr instanceof Error ? docErr.message : docErr}`)
           // Continue to next doc instead of crashing the entire scan
         }
 
@@ -238,9 +238,9 @@ async function runBulkScan(
       currentJob.lastActivity = Date.now()
     }
 
-    console.log(`[spellcheck/bulk] Scan completed: ${processed} docs (${skipped} skipped), ${totalIssues} issues, avg score ${averageScore}`)
+    payload.logger.info(`[spellcheck/bulk] Scan completed: ${processed} docs (${skipped} skipped), ${totalIssues} issues, avg score ${averageScore}`)
   } catch (error) {
-    console.error('[spellcheck/bulk] Scan error:', error)
+    payload.logger.error(`[spellcheck/bulk] Scan error: ${error instanceof Error ? error.message : error}`)
     if (currentJob) {
       currentJob.status = 'error'
       currentJob.error = (error as Error).message
@@ -279,14 +279,14 @@ export function createBulkHandler(
       // If a scan is already running, reject (unless force=true)
       if (currentJob?.status === 'running') {
         if (force) {
-          console.warn('[spellcheck/bulk] Force-resetting stuck scan')
+          req.payload.logger.warn('[spellcheck/bulk] Force-resetting stuck scan')
           currentJob.status = 'error'
           currentJob.error = 'Force reset by user'
           currentJob.completedAt = new Date().toISOString()
         } else {
           return Response.json({
-            error: 'Scan already in progress',
             ...currentJob,
+            error: 'Scan already in progress',
           }, { status: 409 })
         }
       }
@@ -324,8 +324,9 @@ export function createBulkHandler(
         status: 'running',
       })
     } catch (error) {
-      console.error('[spellcheck/bulk] Error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/bulk] Error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }

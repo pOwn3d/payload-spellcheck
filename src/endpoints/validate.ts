@@ -10,8 +10,13 @@ import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { checkWithClaude } from '../engine/claude.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
+import { analyzeReadability, type ReadabilityResult } from '../engine/readability.js'
+import { checkConsistency, type ConsistencyIssue } from '../engine/consistency.js'
 
 // Text extraction is now handled by extractAllTextFromDoc from lexicalParser
+
+/** Maximum text length accepted for validation (characters) */
+const MAX_TEXT_LENGTH = 50_000
 
 export function createValidateHandler(
   pluginConfig: SpellCheckPluginConfig,
@@ -44,9 +49,24 @@ export function createValidateHandler(
       let fetchedDoc: any = null
 
       if (rawText) {
+        // Input validation: reject overly long raw text
+        if (rawText.length > MAX_TEXT_LENGTH) {
+          return Response.json(
+            { error: `Text exceeds maximum length of ${MAX_TEXT_LENGTH} characters (received ${rawText.length})` },
+            { status: 400 },
+          )
+        }
         // Direct text check (no doc lookup)
         textToCheck = rawText
       } else if (id && collection) {
+        // Input validation
+        if (typeof collection !== 'string' || !collection.trim()) {
+          return Response.json({ error: 'collection must be a non-empty string' }, { status: 400 })
+        }
+        if (id !== undefined && (typeof id !== 'string' && typeof id !== 'number' || !String(id).trim())) {
+          return Response.json({ error: 'id must be a non-empty string' }, { status: 400 })
+        }
+
         // Use payload.find() — NOT findByID() — to match bulk.ts exactly.
         // In Payload + SQLite, find() and findByID() can return different
         // document structures (blocks in separate tables, different JOINs).
@@ -64,6 +84,14 @@ export function createValidateHandler(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         fetchedDoc = findResult.docs[0] as any
         textToCheck = extractAllTextFromDoc(fetchedDoc, contentField)
+
+        // Input validation: reject documents with overly long extracted text
+        if (textToCheck.length > MAX_TEXT_LENGTH) {
+          return Response.json(
+            { error: `Extracted text exceeds maximum length of ${MAX_TEXT_LENGTH} characters (got ${textToCheck.length})` },
+            { status: 400 },
+          )
+        }
       } else {
         return Response.json(
           { error: 'Provide { id, collection } or { text }' },
@@ -116,6 +144,12 @@ export function createValidateHandler(
 
       const score = calculateScore(wordCount, issues.length)
 
+      // Run readability analysis
+      const readability = analyzeReadability(textToCheck, (language === 'en' ? 'en' : 'fr') as 'fr' | 'en')
+
+      // Run consistency check
+      const consistency = checkConsistency(textToCheck)
+
       // Store result if we have a doc ID
       if (id && collection) {
         const docIdStr = String(id)
@@ -134,6 +168,8 @@ export function createValidateHandler(
             wordCount,
             issues: issues as unknown as Record<string, unknown>[],
             ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
+            readability: readability as unknown as Record<string, unknown>,
+            consistency: consistency as unknown as Record<string, unknown>[],
             lastChecked: new Date().toISOString(),
           }
 
@@ -152,7 +188,7 @@ export function createValidateHandler(
             })
           }
         } catch (err) {
-          console.error('[spellcheck] Failed to store result:', err)
+          req.payload.logger.error(`[spellcheck] Failed to store result: ${err instanceof Error ? err.message : err}`)
         }
       }
 
@@ -163,13 +199,16 @@ export function createValidateHandler(
         issueCount: issues.length,
         wordCount,
         issues,
+        readability,
+        consistency,
         lastChecked: new Date().toISOString(),
       }
 
       return Response.json(result)
     } catch (error) {
-      console.error('[spellcheck/validate] Error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/validate] Error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }

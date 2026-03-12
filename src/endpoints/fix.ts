@@ -345,6 +345,14 @@ export function createFixHandler(
         )
       }
 
+      // Input validation
+      if (typeof collection !== 'string' || !collection.trim()) {
+        return Response.json({ error: 'collection must be a non-empty string' }, { status: 400 })
+      }
+      if (typeof id !== 'string' && typeof id !== 'number' || !String(id).trim()) {
+        return Response.json({ error: 'id must be a non-empty string' }, { status: 400 })
+      }
+
       const contentField = field || pluginConfig.contentField || 'content'
 
       // Use payload.find() — NOT findByID() — to match bulk.ts exactly.
@@ -389,13 +397,13 @@ export function createFixHandler(
           const foundOffset = findClosestMatch(fullText, original, offset)
 
           if (foundOffset >= 0) {
-            console.log(
+            req.payload.logger.info(
               `[spellcheck/fix] Offset drift corrected: "${original}" at ${foundOffset} (stored: ${offset}, drift: ${foundOffset - offset})`,
             )
             result = applyFixAtOffset(segments, fullText, foundOffset, original.length, replacement, doc)
             method = 'search'
           } else {
-            console.warn(
+            req.payload.logger.warn(
               `[spellcheck/fix] "${original}" not found in extracted text (${fullText.length} chars)`,
             )
             result = { fixed: false, modifiedField: null }
@@ -454,8 +462,9 @@ export function createFixHandler(
         method,
       })
     } catch (error) {
-      console.error('[spellcheck/fix] Error:', error)
-      return Response.json({ error: 'Internal server error' }, { status: 500 })
+      const message = error instanceof Error ? error.message : 'Internal server error'
+      req.payload.logger.error(`[spellcheck/fix] Error: ${message}`)
+      return Response.json({ error: message }, { status: 500 })
     }
   }
 }

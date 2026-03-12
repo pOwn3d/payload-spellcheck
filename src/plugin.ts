@@ -24,8 +24,10 @@ import { createSpellCheckResultsCollection } from './collections/SpellCheckResul
 import { createSpellCheckDictionaryCollection } from './collections/SpellCheckDictionary.js'
 import { createValidateHandler } from './endpoints/validate.js'
 import { createFixHandler } from './endpoints/fix.js'
+import { createFixAllHandler } from './endpoints/fixAll.js'
 import { createBulkHandler, createStatusHandler } from './endpoints/bulk.js'
 import { createDictionaryListHandler, createDictionaryAddHandler, createDictionaryDeleteHandler } from './endpoints/dictionary.js'
+import { createRateLimiter, getClientIp, rateLimitResponse } from './endpoints/rateLimit.js'
 import { createAfterChangeCheckHook } from './hooks/afterChangeCheck.js'
 
 /**
@@ -151,43 +153,85 @@ export const spellcheckPlugin =
       createSpellCheckDictionaryCollection(),
     ]
 
-    // 3. Add API endpoints
+    // 3. Add API endpoints (with per-endpoint rate limiting)
+    const validateLimiter = createRateLimiter(30, 60_000)    // 30 req/min
+    const fixLimiter = createRateLimiter(20, 60_000)         // 20 req/min
+    const bulkLimiter = createRateLimiter(3, 60_000)         // 3 req/min
+    const dictionaryLimiter = createRateLimiter(60, 60_000)  // 60 req/min
+
+    const fixAllLimiter = createRateLimiter(5, 60_000)    // 5 req/min
+
+    const validateHandler = createValidateHandler(pluginConfig)
+    const fixHandler = createFixHandler(pluginConfig)
+    const fixAllHandler = createFixAllHandler(pluginConfig)
+    const bulkHandler = createBulkHandler(targetCollections, pluginConfig)
+    const statusHandler = createStatusHandler()
+    const dictListHandler = createDictionaryListHandler()
+    const dictAddHandler = createDictionaryAddHandler()
+    const dictDeleteHandler = createDictionaryDeleteHandler()
+
     config.endpoints = [
       ...(config.endpoints || []),
       {
         path: `${basePath}/validate`,
         method: 'post' as const,
-        handler: createValidateHandler(pluginConfig),
+        handler: ((req) => {
+          if (!validateLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return validateHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/fix`,
         method: 'post' as const,
-        handler: createFixHandler(pluginConfig),
+        handler: ((req) => {
+          if (!fixLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return fixHandler(req)
+        }) as import('payload').PayloadHandler,
+      },
+      {
+        path: `${basePath}/fix-all`,
+        method: 'post' as const,
+        handler: ((req) => {
+          if (!fixAllLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return fixAllHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/bulk`,
         method: 'post' as const,
-        handler: createBulkHandler(targetCollections, pluginConfig),
+        handler: ((req) => {
+          if (!bulkLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return bulkHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/status`,
         method: 'get' as const,
-        handler: createStatusHandler(),
+        handler: statusHandler,
       },
       {
         path: `${basePath}/dictionary`,
         method: 'get' as const,
-        handler: createDictionaryListHandler(),
+        handler: ((req) => {
+          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return dictListHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/dictionary`,
         method: 'post' as const,
-        handler: createDictionaryAddHandler(),
+        handler: ((req) => {
+          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return dictAddHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/dictionary`,
         method: 'delete' as const,
-        handler: createDictionaryDeleteHandler(),
+        handler: ((req) => {
+          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return dictDeleteHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/collections`,

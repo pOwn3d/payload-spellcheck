@@ -85,9 +85,9 @@ export function createAfterChangeCheckHook(
           })
         }
 
-        console.log(`[spellcheck] Auto-check: ${collectionSlug}/${doc.id} — score ${score}, ${issues.length} issues`)
+        req.payload.logger.info(`[spellcheck] Auto-check: ${collectionSlug}/${doc.id} — score ${score}, ${issues.length} issues`)
       } catch (err) {
-        console.error('[spellcheck] afterChange hook error:', err)
+        req.payload.logger.error(`[spellcheck] afterChange hook error: ${err instanceof Error ? err.message : err}`)
       }
     })()
 
