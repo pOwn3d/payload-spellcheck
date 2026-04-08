@@ -82,21 +82,6 @@ function countSyllablesEn(word: string): number {
     count--
   }
 
-  // Common suffixes that add syllables
-  if (lower.endsWith('tion') || lower.endsWith('sion')) {
-    // Already counted — no adjustment needed
-  }
-
-  // '-ed' at end is usually silent (walked, played) unless preceded by 't' or 'd'
-  if (lower.endsWith('ed') && lower.length > 3) {
-    const beforeEd = lower.charAt(lower.length - 3)
-    if (beforeEd !== 't' && beforeEd !== 'd') {
-      // -ed is silent, but we already counted 'e' in vowel groups
-      // No additional subtraction needed since 'e' followed by 'd' (consonant)
-      // would have been counted as a vowel group end
-    }
-  }
-
   return Math.max(1, count)
 }
 

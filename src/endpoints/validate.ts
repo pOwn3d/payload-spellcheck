@@ -15,8 +15,6 @@ import { checkConsistency, type ConsistencyIssue } from '../engine/consistency.j
 import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
 import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
 
-// Text extraction is now handled by extractAllTextFromDoc from lexicalParser
-
 /** Maximum text length accepted for validation (characters) */
 const MAX_TEXT_LENGTH = 50_000
 

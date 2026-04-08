@@ -40,7 +40,6 @@ export default defineConfig([
       'src/components/SpellCheckScoreCell.tsx',
       'src/components/useSpellcheckI18n.ts',
       // Utility modules imported by components (must be emitted for bundle:false)
-      'src/engine/filters.ts',
       'src/i18n.ts',
       'src/types.ts',
     ],

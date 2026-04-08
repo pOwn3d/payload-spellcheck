@@ -14,7 +14,6 @@ import { useDocumentInfo } from '@payloadcms/ui'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
 import type { ReadabilityResult } from '../engine/readability.js'
-import { calculateScore } from '../engine/filters.js'
 import { useSpellcheckI18n } from './useSpellcheckI18n.js'
 
 const styles = {

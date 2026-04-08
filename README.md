@@ -632,6 +632,17 @@ DROP TABLE IF EXISTS `spellcheck_results`;
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
+## Roadmap
+
+- Bulk scan with AI (Claude) integration
+- Export spell check results as CSV/JSON
+- Webhook / notification on new issues found
+- Per-field spellcheck configuration
+- Custom dictionaries per collection
+- Grammar rules beyond spelling (style, tone, consistency)
+- Auto-correct suggestions with one-click apply
+- Integration with external APIs (Grammarly, LanguageTool Cloud)
+
 ## ☕ Support
 
 If this plugin saves you time, consider buying me a coffee!
