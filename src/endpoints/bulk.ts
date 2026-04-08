@@ -12,9 +12,13 @@ import type { SpellCheckPluginConfig, SpellCheckResult } from '../types.js'
 import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { checkWithLanguageTool } from '../engine/languagetool.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
+import { analyzeReadability } from '../engine/readability.js'
+import { checkConsistency } from '../engine/consistency.js'
+import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
+import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
 
-const RATE_LIMIT_DELAY = 3_000 // 3 seconds between LanguageTool API calls
-const STALE_TIMEOUT = 10 * 60 * 1000 // 10 minutes — consider job dead if no progress
+const DEFAULT_RATE_LIMIT_DELAY = 3_000 // 3 seconds between LanguageTool API calls
+const DEFAULT_STALE_TIMEOUT = 10 * 60 * 1000 // 10 minutes — consider job dead if no progress
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -38,16 +42,15 @@ interface ScanJob {
 // Module-level state — persists across requests
 let currentJob: ScanJob | null = null
 
-/** Check if the current job is stale (no progress for STALE_TIMEOUT) */
-function isJobStale(): boolean {
+/** Check if the current job is stale (no progress for staleTimeout) */
+function isJobStale(staleTimeout: number): boolean {
   if (!currentJob || currentJob.status !== 'running') return false
-  return Date.now() - currentJob.lastActivity > STALE_TIMEOUT
+  return Date.now() - currentJob.lastActivity > staleTimeout
 }
 
 /** Reset the job if stale */
-function resetIfStale(): void {
-  if (isJobStale() && currentJob) {
-    console.warn(`[spellcheck/bulk] Job stale (no progress for ${STALE_TIMEOUT / 1000}s), auto-resetting`)
+function resetIfStale(staleTimeout: number = DEFAULT_STALE_TIMEOUT): void {
+  if (isJobStale(staleTimeout) && currentJob) {
     currentJob.status = 'error'
     currentJob.error = 'Scan timed out (no progress)'
     currentJob.completedAt = new Date().toISOString()
@@ -65,6 +68,7 @@ async function runBulkScan(
 ): Promise<void> {
   const language = pluginConfig.language || 'fr'
   const contentField = pluginConfig.contentField || 'content'
+  const rateLimitDelay = pluginConfig.timeouts?.bulkRateLimitDelay ?? DEFAULT_RATE_LIMIT_DELAY
   const results: SpellCheckResult[] = []
 
   try {
@@ -136,33 +140,20 @@ async function runBulkScan(
           issues = await filterFalsePositives(issues, pluginConfig, payload)
 
           // Load existing result to get ignoredIssues
-          let existingDoc: { id: string | number; ignoredIssues?: Array<{ ruleId: string; original: string }> } | null = null
-          try {
-            const existing = await payload.find({
-              collection: 'spellcheck-results',
-              where: {
-                docId: { equals: String(doc.id) },
-                collection: { equals: collectionSlug },
-              },
-              limit: 1,
-              overrideAccess: true,
-            })
-            if (existing.docs.length > 0) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              existingDoc = existing.docs[0] as any
-            }
-          } catch { /* ignore */ }
+          const existingDoc = await findSpellcheckResult(payload, String(doc.id), collectionSlug)
+          const ignoredIssues: IgnoredIssue[] = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc.ignoredIssues : []
 
           // Filter out user-ignored issues (persistent across rescans)
-          const ignoredIssues: Array<{ ruleId: string; original: string }> = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc!.ignoredIssues : []
-          if (ignoredIssues.length > 0) {
-            issues = issues.filter((issue) =>
-              !ignoredIssues.some((ignored) => ignored.ruleId === issue.ruleId && ignored.original === issue.original),
-            )
-          }
+          issues = filterIgnoredIssues(issues, ignoredIssues)
 
           const score = calculateScore(wordCount, issues.length)
           totalIssues += issues.length
+
+          // Run readability analysis
+          const readability = analyzeReadability(text, (language === 'en' ? 'en' : 'fr') as 'fr' | 'en')
+
+          // Run consistency check
+          const consistency = checkConsistency(text)
 
           const result: SpellCheckResult = {
             docId: String(doc.id),
@@ -171,15 +162,15 @@ async function runBulkScan(
             issueCount: issues.length,
             wordCount,
             issues,
+            readability,
+            consistency,
             lastChecked: new Date().toISOString(),
           }
           results.push(result)
 
           // Store/update result in collection (preserve ignoredIssues)
           try {
-            const resultData = {
-              docId: String(doc.id),
-              collection: collectionSlug,
+            await upsertSpellcheckResult(payload, String(doc.id), collectionSlug, {
               title: docAny.title || '',
               slug: docAny.slug || '',
               score,
@@ -187,23 +178,10 @@ async function runBulkScan(
               wordCount,
               issues: issues as unknown as Record<string, unknown>[],
               ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
+              readability: readability as unknown as Record<string, unknown>,
+              consistency: consistency as unknown as Record<string, unknown>[],
               lastChecked: new Date().toISOString(),
-            }
-
-            if (existingDoc) {
-              await payload.update({
-                collection: 'spellcheck-results',
-                id: existingDoc.id,
-                data: resultData,
-                overrideAccess: true,
-              })
-            } else {
-              await payload.create({
-                collection: 'spellcheck-results',
-                data: resultData,
-                overrideAccess: true,
-              })
-            }
+            })
           } catch (err) {
             payload.logger.error(`[spellcheck/bulk] Failed to store result for ${docTitle}: ${err instanceof Error ? err.message : err}`)
           }
@@ -220,7 +198,7 @@ async function runBulkScan(
         }
 
         // Rate limit delay
-        await sleep(RATE_LIMIT_DELAY)
+        await sleep(rateLimitDelay)
       }
     }
 
@@ -261,12 +239,19 @@ export function createBulkHandler(
 ): PayloadHandler {
   return async (req) => {
     try {
-      if (!req.user) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      // RBAC: check access (default: admin only)
+      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
+        const u = r.user as Record<string, unknown> | null | undefined
+        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+      })
+      if (!req.user || !accessFn(req)) {
+        return Response.json({ error: 'Unauthorized' }, { status: 403 })
       }
 
+      const staleTimeout = pluginConfig.timeouts?.bulkStaleTimeout ?? DEFAULT_STALE_TIMEOUT
+
       // Auto-reset stale jobs
-      resetIfStale()
+      resetIfStale(staleTimeout)
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
@@ -334,14 +319,21 @@ export function createBulkHandler(
 /**
  * GET handler — return current scan status/progress.
  */
-export function createStatusHandler(): PayloadHandler {
+export function createStatusHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
   return async (req) => {
-    if (!req.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    // RBAC: check access (default: admin only)
+    const accessFn = pluginConfig?.access || ((r: { user?: Record<string, unknown> | null }) => {
+      const u = r.user as Record<string, unknown> | null | undefined
+      return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+    })
+    if (!req.user || !accessFn(req)) {
+      return Response.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
+    const staleTimeout = pluginConfig?.timeouts?.bulkStaleTimeout ?? DEFAULT_STALE_TIMEOUT
+
     // Auto-reset stale jobs
-    resetIfStale()
+    resetIfStale(staleTimeout)
 
     if (!currentJob) {
       return Response.json({ status: 'idle' })

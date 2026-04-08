@@ -3,13 +3,14 @@
  * POST /api/spellcheck/fix-all
  * Body: { id, collection }
  *
- * Loads existing spellcheck results, applies each fix one-by-one (re-fetching
- * the doc each time to account for offset shifts from previous fixes),
- * and returns a summary of applied/failed fixes.
+ * Loads existing spellcheck results, applies each fix one-by-one using
+ * the shared fixCore logic (no HTTP self-call), re-fetching the doc each
+ * time to account for offset shifts from previous fixes.
  */
 
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckIssue } from '../types.js'
+import { applyFix } from './fixCore.js'
 
 export interface FixAllResult {
   /** Number of fixes successfully applied */
@@ -25,8 +26,13 @@ export function createFixAllHandler(
 ): PayloadHandler {
   return async (req) => {
     try {
-      if (!req.user) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      // RBAC: check access (default: admin only)
+      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
+        const u = r.user as Record<string, unknown> | null | undefined
+        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+      })
+      if (!req.user || !accessFn(req)) {
+        return Response.json({ error: 'Unauthorized' }, { status: 403 })
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,6 +47,12 @@ export function createFixAllHandler(
           { error: 'Missing required fields: id, collection' },
           { status: 400 },
         )
+      }
+
+      // Validate collection against allowed list to prevent injection
+      const allowedCollections = pluginConfig.collections ?? ['pages', 'posts']
+      if (!allowedCollections.includes(collection)) {
+        return Response.json({ error: 'Collection not allowed' }, { status: 403 })
       }
 
       // Load existing spellcheck results for this document
@@ -88,39 +100,27 @@ export function createFixAllHandler(
       let applied = 0
       let failed = 0
 
-      // Apply fixes one-by-one, calling the fix endpoint logic for each
-      // We re-use the internal fix API to ensure consistent behavior
+      // Apply fixes one-by-one using the shared core logic (no HTTP self-call)
       for (const issue of fixableIssues) {
         const replacement = issue.replacements[0]
         try {
-          const fixRes = await fetch(
-            `${req.headers.get('origin') || ''}/api/spellcheck/fix`,
+          const fixResult = await applyFix(
+            req.payload,
             {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Cookie: req.headers.get('cookie') || '',
-              },
-              body: JSON.stringify({
-                id,
-                collection,
-                original: issue.original,
-                replacement,
-                offset: issue.offset,
-                length: issue.length,
-              }),
+              id,
+              collection,
+              original: issue.original,
+              replacement,
+              offset: issue.offset,
+              length: issue.length,
             },
+            pluginConfig,
+            req.payload.logger,
           )
 
-          if (fixRes.ok) {
-            const fixData = await fixRes.json()
-            if (fixData.success) {
-              applied++
-              details.push({ original: issue.original, replacement, success: true })
-            } else {
-              failed++
-              details.push({ original: issue.original, replacement, success: false })
-            }
+          if (fixResult.success) {
+            applied++
+            details.push({ original: issue.original, replacement, success: true })
           } else {
             failed++
             details.push({ original: issue.original, replacement, success: false })

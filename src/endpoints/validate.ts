@@ -12,6 +12,8 @@ import { checkWithClaude } from '../engine/claude.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 import { analyzeReadability, type ReadabilityResult } from '../engine/readability.js'
 import { checkConsistency, type ConsistencyIssue } from '../engine/consistency.js'
+import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
+import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
 
 // Text extraction is now handled by extractAllTextFromDoc from lexicalParser
 
@@ -23,8 +25,13 @@ export function createValidateHandler(
 ): PayloadHandler {
   return async (req) => {
     try {
-      if (!req.user) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      // RBAC: check access (default: admin only)
+      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
+        const u = r.user as Record<string, unknown> | null | undefined
+        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+      })
+      if (!req.user || !accessFn(req)) {
+        return Response.json({ error: 'Unauthorized' }, { status: 403 })
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,6 +46,12 @@ export function createValidateHandler(
         collection?: string
         text?: string
         language?: string
+      }
+
+      // Validate collection against allowed list to prevent injection
+      const allowedCollections = pluginConfig.collections ?? ['pages', 'posts']
+      if (collection && !allowedCollections.includes(collection)) {
+        return Response.json({ error: 'Collection not allowed' }, { status: 403 })
       }
 
       const language = bodyLanguage || pluginConfig.language || 'fr'
@@ -68,8 +81,6 @@ export function createValidateHandler(
         }
 
         // Use payload.find() — NOT findByID() — to match bulk.ts exactly.
-        // In Payload + SQLite, find() and findByID() can return different
-        // document structures (blocks in separate tables, different JOINs).
         const findResult = await req.payload.find({
           collection,
           where: { id: { equals: id } },
@@ -106,7 +117,7 @@ export function createValidateHandler(
 
       // Optional Claude fallback for semantic issues
       if (pluginConfig.enableAiFallback && pluginConfig.anthropicApiKey) {
-        const claudeIssues = await checkWithClaude(textToCheck, language, pluginConfig.anthropicApiKey)
+        const claudeIssues = await checkWithClaude(textToCheck, language, pluginConfig.anthropicApiKey, pluginConfig)
         issues = [...issues, ...claudeIssues]
       }
 
@@ -114,33 +125,18 @@ export function createValidateHandler(
       issues = await filterFalsePositives(issues, pluginConfig, req.payload)
 
       // Load existing result to get ignoredIssues (persistent ignore)
-      let ignoredIssues: Array<{ ruleId: string; original: string }> = []
+      let ignoredIssues: IgnoredIssue[] = []
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let existingDoc: any = null
       if (id && collection) {
-        try {
-          const existing = await req.payload.find({
-            collection: 'spellcheck-results',
-            where: {
-              docId: { equals: String(id) },
-              collection: { equals: collection },
-            },
-            limit: 1,
-            overrideAccess: true,
-          })
-          if (existing.docs.length > 0) {
-            existingDoc = existing.docs[0]
-            ignoredIssues = Array.isArray(existingDoc.ignoredIssues) ? existingDoc.ignoredIssues : []
-          }
-        } catch { /* ignore */ }
+        existingDoc = await findSpellcheckResult(req.payload, String(id), collection)
+        if (existingDoc) {
+          ignoredIssues = Array.isArray(existingDoc.ignoredIssues) ? existingDoc.ignoredIssues : []
+        }
       }
 
       // Filter out user-ignored issues
-      if (ignoredIssues.length > 0) {
-        issues = issues.filter((issue) =>
-          !ignoredIssues.some((ignored) => ignored.ruleId === issue.ruleId && ignored.original === issue.original),
-        )
-      }
+      issues = filterIgnoredIssues(issues, ignoredIssues)
 
       const score = calculateScore(wordCount, issues.length)
 
@@ -152,15 +148,11 @@ export function createValidateHandler(
 
       // Store result if we have a doc ID
       if (id && collection) {
-        const docIdStr = String(id)
         try {
-          // Get doc title/slug from the already-fetched document
           const title = fetchedDoc?.title as string || ''
           const slug = fetchedDoc?.slug as string || ''
 
-          const resultData = {
-            docId: docIdStr,
-            collection,
+          await upsertSpellcheckResult(req.payload, String(id), collection, {
             title,
             slug,
             score,
@@ -171,22 +163,7 @@ export function createValidateHandler(
             readability: readability as unknown as Record<string, unknown>,
             consistency: consistency as unknown as Record<string, unknown>[],
             lastChecked: new Date().toISOString(),
-          }
-
-          if (existingDoc) {
-            await req.payload.update({
-              collection: 'spellcheck-results',
-              id: existingDoc.id,
-              data: resultData,
-              overrideAccess: true,
-            })
-          } else {
-            await req.payload.create({
-              collection: 'spellcheck-results',
-              data: resultData,
-              overrideAccess: true,
-            })
-          }
+          })
         } catch (err) {
           req.payload.logger.error(`[spellcheck] Failed to store result: ${err instanceof Error ? err.message : err}`)
         }

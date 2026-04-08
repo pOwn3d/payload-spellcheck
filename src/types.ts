@@ -52,6 +52,8 @@ export interface SpellCheckResult {
 }
 
 export interface SpellCheckPluginConfig {
+  /** Access control function — return true to allow access (default: admin only) */
+  access?: (req: { user?: Record<string, unknown> | null }) => boolean
   /** Collections to check (default: ['pages', 'posts']) */
   collections?: string[]
   /** Rich text field name to extract content from (default: 'content') */
@@ -80,4 +82,45 @@ export interface SpellCheckPluginConfig {
   skipCategories?: string[]
   /** Custom dictionary — words to never flag */
   customDictionary?: string[]
+
+  /** Package name used for component imports (default: '@consilioweb/spellcheck') */
+  packageName?: string
+  /** LanguageTool API URL (default: 'https://api.languagetool.org/v2/check') — use for self-hosted instances */
+  languageToolUrl?: string
+  /** Score below which a warning is shown in the UI (default: 80) */
+  warningThreshold?: number
+  /** Attempt to auto-fix missing schema columns on init (default: true) */
+  autoFixSchema?: boolean
+
+  /** Rate limit overrides for API endpoints */
+  rateLimits?: {
+    /** Max requests per window for /validate (default: 30) */
+    validate?: number
+    /** Max requests per window for /fix (default: 20) */
+    fix?: number
+    /** Max requests per window for /fix-all (default: 5) */
+    fixAll?: number
+    /** Max requests per window for /bulk (default: 3) */
+    bulk?: number
+    /** Max requests per window for /dictionary (default: 60) */
+    dictionary?: number
+    /** Rate limit window in milliseconds (default: 60000) */
+    windowMs?: number
+  }
+
+  /** Timeout and limit overrides */
+  timeouts?: {
+    /** LanguageTool API request timeout in ms (default: 30000) */
+    languageTool?: number
+    /** Claude API request timeout in ms (default: 60000) */
+    claude?: number
+    /** Max text length sent to LanguageTool in characters (default: 18000) */
+    maxTextLengthLanguageTool?: number
+    /** Max text length sent to Claude in characters (default: 8000) */
+    maxTextLengthClaude?: number
+    /** Delay between LanguageTool API calls during bulk scan in ms (default: 3000) */
+    bulkRateLimitDelay?: number
+    /** Stale job timeout for bulk scans in ms (default: 600000) */
+    bulkStaleTimeout?: number
+  }
 }

@@ -4,11 +4,11 @@
  * Does NOT check spelling/grammar (LanguageTool handles that).
  */
 
-import type { SpellCheckIssue } from '../types.js'
+import type { SpellCheckIssue, SpellCheckPluginConfig } from '../types.js'
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages'
-const REQUEST_TIMEOUT = 60_000
-const MAX_TEXT_LENGTH = 8_000
+const DEFAULT_REQUEST_TIMEOUT = 60_000
+const DEFAULT_MAX_TEXT_LENGTH = 8_000
 
 interface ClaudeResponse {
   content: Array<{ type: string; text: string }>
@@ -30,11 +30,16 @@ export async function checkWithClaude(
   text: string,
   language: string,
   apiKey: string,
+  config?: SpellCheckPluginConfig,
+  logger?: { error: (msg: string) => void },
 ): Promise<SpellCheckIssue[]> {
   if (!text.trim() || !apiKey) return []
 
-  const truncatedText = text.length > MAX_TEXT_LENGTH
-    ? text.slice(0, MAX_TEXT_LENGTH)
+  const maxTextLength = config?.timeouts?.maxTextLengthClaude ?? DEFAULT_MAX_TEXT_LENGTH
+  const requestTimeout = config?.timeouts?.claude ?? DEFAULT_REQUEST_TIMEOUT
+
+  const truncatedText = text.length > maxTextLength
+    ? text.slice(0, maxTextLength)
     : text
 
   const langLabel = language === 'fr' ? 'French' : 'English'
@@ -53,7 +58,7 @@ Text:
 ${truncatedText}`
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  const timeoutId = setTimeout(() => controller.abort(), requestTimeout)
 
   try {
     const response = await fetch(ANTHROPIC_API, {
@@ -76,7 +81,7 @@ ${truncatedText}`
     clearTimeout(timeoutId)
 
     if (!response.ok) {
-      console.error(`[spellcheck] Claude API error: ${response.status}`)
+      logger?.error(`[spellcheck] Claude API error: ${response.status}`)
       return []
     }
 
@@ -102,7 +107,7 @@ ${truncatedText}`
     }))
   } catch (error) {
     clearTimeout(timeoutId)
-    console.error('[spellcheck] Claude error:', error)
+    logger?.error(`[spellcheck] Claude error: ${error instanceof Error ? error.message : error}`)
     return []
   }
 }

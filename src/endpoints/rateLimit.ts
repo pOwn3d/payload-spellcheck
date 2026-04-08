@@ -66,16 +66,27 @@ export function createRateLimiter(maxRequests: number, windowMs: number) {
 /**
  * Extract client IP from a Payload request.
  * Checks x-forwarded-for, x-real-ip, then falls back to 'unknown'.
+ *
+ * SECURITY NOTE: x-forwarded-for and x-real-ip headers can be spoofed by
+ * clients when there is no trusted reverse proxy stripping/overwriting them.
+ * This rate limiter is a best-effort defense-in-depth measure. In production,
+ * ensure your reverse proxy (nginx, Cloudflare, etc.) sets these headers from
+ * the actual client IP and strips any client-supplied values.
+ *
+ * If `trustProxy` is false, only 'unknown' is returned (all clients share
+ * the same bucket, effectively a global rate limit).
  */
-export function getClientIp(req: { headers: Headers }): string {
-  const forwarded = req.headers.get('x-forwarded-for')
-  if (forwarded) {
-    // x-forwarded-for can contain multiple IPs; take the first (client)
-    return forwarded.split(',')[0].trim()
-  }
+export function getClientIp(req: { headers: Headers }, trustProxy = true): string {
+  if (trustProxy) {
+    const forwarded = req.headers.get('x-forwarded-for')
+    if (forwarded) {
+      // x-forwarded-for can contain multiple IPs; take the first (client)
+      return forwarded.split(',')[0].trim()
+    }
 
-  const realIp = req.headers.get('x-real-ip')
-  if (realIp) return realIp.trim()
+    const realIp = req.headers.get('x-real-ip')
+    if (realIp) return realIp.trim()
+  }
 
   return 'unknown'
 }

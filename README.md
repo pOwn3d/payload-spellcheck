@@ -12,7 +12,30 @@
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6" alt="TypeScript" />
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/pown3d">
+    <img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy me a coffee" />
+  </a>
+</p>
+
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+
+> [!IMPORTANT]
+> ## ⚠️ Next.js 16 + Turbopack — Known Issue
+>
+> If you're using **Next.js 16** with Turbopack (default bundler), you may encounter a `createContext is not a function` error during `next build`. This is a **known Payload CMS issue** ([#15429](https://github.com/payloadcms/payload/issues/15429), [#14330](https://github.com/payloadcms/payload/discussions/14330)) — not specific to this plugin.
+>
+> **Workaround** — Add this to your admin page (`src/app/(payload)/admin/[[...segments]]/page.tsx`):
+> ```ts
+> export const dynamic = 'force-dynamic'
+> ```
+>
+> And ensure all `@consilioweb/*` packages are in `transpilePackages` in your `next.config.ts`:
+> ```ts
+> transpilePackages: ['@consilioweb/seo-analyzer', '@consilioweb/admin-nav', /* ...other @consilioweb packages */],
+> ```
+>
+> ✅ **Next.js 15** works without any workaround.
 
 ## About
 
@@ -223,6 +246,20 @@ spellcheckPlugin({
 
   // Anthropic API key (required if enableAiFallback is true)
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+
+  // ── RBAC (v0.13.0) ────────────────────────────────────
+
+
+  // Custom access control function (default: admin-only)
+  access: ({ req }) => req.user?.role === 'admin',
+
+  // ── Advanced (v0.13.0) ─────────────────────────────────
+
+  // Custom package name for component paths (monorepo support)
+  packageName: '@my-scope/spellcheck',
+
+  // Trust x-forwarded-for header for IP-based rate limiting
+  trustProxy: false,
 })
 ```
 
@@ -230,19 +267,49 @@ spellcheckPlugin({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `collections` | `string[]` | `['pages', 'posts']` | Collections to check |
-| `contentField` | `string` | `'content'` | Rich text field name |
-| `language` | `string` | `'fr'` | LanguageTool language code |
-| `checkOnSave` | `boolean` | `true` | Auto-check on document save |
-| `addSidebarField` | `boolean` | `true` | Add sidebar field in editor |
-| `addDashboardView` | `boolean` | `true` | Add `/admin/spellcheck` view |
-| `endpointBasePath` | `string` | `'/spellcheck'` | Base path for API endpoints |
-| `enableAiFallback` | `boolean` | `false` | Enable Claude AI semantic analysis |
-| `anthropicApiKey` | `string` | — | Anthropic API key for Claude |
-| `skipRules` | `string[]` | `[]` | LanguageTool rule IDs to skip |
-| `skipCategories` | `string[]` | `[]` | LanguageTool categories to skip |
-| `customDictionary` | `string[]` | `[]` | Words to never flag |
-| `warningThreshold` | `number` | `80` | Score below which a warning is shown |
+| `collections` | `string[]` | `['pages', 'posts']` | Collections à vérifier |
+| `contentField` | `string` | `'content'` | Nom du champ rich text à extraire |
+| `language` | `string` | `'fr'` | Code langue pour LanguageTool |
+| `checkOnSave` | `boolean` | `true` | Vérification automatique à la sauvegarde |
+| `addSidebarField` | `boolean` | `true` | Ajouter le champ sidebar dans l'éditeur |
+| `addDashboardView` | `boolean` | `true` | Ajouter la vue `/admin/spellcheck` |
+| `addListColumn` | `boolean` | `true` | Ajouter la colonne score dans les listes de collection |
+| `endpointBasePath` | `string` | `'/spellcheck'` | Chemin de base pour les endpoints API |
+| `enableAiFallback` | `boolean` | `false` | Activer l'analyse sémantique Claude AI |
+| `anthropicApiKey` | `string` | — | Clé API Anthropic pour Claude |
+| `skipRules` | `string[]` | `[]` | IDs de règles LanguageTool à ignorer |
+| `skipCategories` | `string[]` | `[]` | Catégories LanguageTool à ignorer |
+| `customDictionary` | `string[]` | `[]` | Mots à ne jamais signaler comme erreurs |
+| `languageToolUrl` | `string` | `'https://api.languagetool.org/v2/check'` | URL de l'API LanguageTool (pour instances auto-hébergées) |
+| `warningThreshold` | `number` | `80` | Score en dessous duquel un avertissement est affiché |
+| `autoFixSchema` | `boolean` | `true` | Auto-fix missing DB columns on startup |
+| `access` | `function` | Admin-only | Custom access control function for endpoints (v0.13.0) |
+| `packageName` | `string` | `'@consilioweb/spellcheck'` | Custom package name for component paths — useful in monorepos (v0.13.0) |
+| `trustProxy` | `boolean` | `false` | Trust x-forwarded-for header for IP-based rate limiting (v0.13.0) |
+| `rateLimits` | `object` | -- | Rate limiting overrides (see below) |
+| `timeouts` | `object` | -- | Timeout and limit overrides (see below) |
+
+#### `rateLimits`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `rateLimits.validate` | `number` | `30` | Max requêtes par fenêtre pour `/validate` |
+| `rateLimits.fix` | `number` | `20` | Max requêtes par fenêtre pour `/fix` |
+| `rateLimits.fixAll` | `number` | `5` | Max requêtes par fenêtre pour `/fix-all` |
+| `rateLimits.bulk` | `number` | `3` | Max requêtes par fenêtre pour `/bulk` |
+| `rateLimits.dictionary` | `number` | `60` | Max requêtes par fenêtre pour `/dictionary` |
+| `rateLimits.windowMs` | `number` | `60000` | Fenêtre de rate limiting en millisecondes |
+
+#### `timeouts`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeouts.languageTool` | `number` | `30000` | Timeout de l'API LanguageTool en ms |
+| `timeouts.claude` | `number` | `60000` | Timeout de l'API Claude en ms |
+| `timeouts.maxTextLengthLanguageTool` | `number` | `18000` | Longueur max du texte envoyé à LanguageTool (caractères) |
+| `timeouts.maxTextLengthClaude` | `number` | `8000` | Longueur max du texte envoyé à Claude (caractères) |
+| `timeouts.bulkRateLimitDelay` | `number` | `3000` | Délai entre les appels API LanguageTool lors d'un scan bulk (ms) |
+| `timeouts.bulkStaleTimeout` | `number` | `600000` | Timeout pour les jobs bulk stale (ms) |
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
@@ -525,6 +592,19 @@ DROP TABLE IF EXISTS `spellcheck_results`;
 
 ## Changelog
 
+### v0.13.0
+
+- **New**: RBAC with configurable `access` function in plugin config
+- **New**: `packageName` option for custom package name in component paths
+- **New**: `useSpellcheckI18n` hook for component localization
+- **New**: i18n integration in SpellCheckField and IssueCard components
+- **New**: Client-side score cache (30s TTL) in SpellCheckScoreCell
+- **New**: Collection injection protection on validate, fix, fixAll endpoints
+- **New**: IP spoofing protection with `trustProxy` option
+- **Changed**: fixAll calls fix logic directly instead of HTTP self-fetch (eliminates SSRF)
+- **Changed**: URL built from NEXT_PUBLIC_SERVER_URL, not Origin header
+- **Changed**: Score formula alignment between client and server
+
 ### v0.8.1
 
 - **Fix**: Corrections now remove the issue from the UI immediately (optimistic update)
@@ -551,6 +631,14 @@ DROP TABLE IF EXISTS `spellcheck_results`;
 - Contextual offset, manual edit input, repetition filter
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+
+## ☕ Support
+
+If this plugin saves you time, consider buying me a coffee!
+
+<a href="https://buymeacoffee.com/pown3d">
+  <img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=pown3d&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" />
+</a>
 
 ## License
 

@@ -79,6 +79,7 @@ export const spellcheckPlugin =
     const checkOnSave = pluginConfig.checkOnSave !== false
     const addSidebarField = pluginConfig.addSidebarField !== false
     const addDashboardView = pluginConfig.addDashboardView !== false
+    const pkgName = pluginConfig.packageName || '@consilioweb/spellcheck'
 
     // 1. Add afterChange hook + sidebar field to target collections
     if (config.collections) {
@@ -109,7 +110,7 @@ export const spellcheckPlugin =
               admin: {
                 position: 'sidebar',
                 components: {
-                  Field: '@consilioweb/spellcheck/client#SpellCheckField',
+                  Field: `${pkgName}/client#SpellCheckField`,
                 },
               },
             },
@@ -126,7 +127,7 @@ export const spellcheckPlugin =
               label: 'Ortho',
               admin: {
                 components: {
-                  Cell: '@consilioweb/spellcheck/client#SpellCheckScoreCell',
+                  Cell: `${pkgName}/client#SpellCheckScoreCell`,
                 },
               },
             },
@@ -154,21 +155,22 @@ export const spellcheckPlugin =
     ]
 
     // 3. Add API endpoints (with per-endpoint rate limiting)
-    const validateLimiter = createRateLimiter(30, 60_000)    // 30 req/min
-    const fixLimiter = createRateLimiter(20, 60_000)         // 20 req/min
-    const bulkLimiter = createRateLimiter(3, 60_000)         // 3 req/min
-    const dictionaryLimiter = createRateLimiter(60, 60_000)  // 60 req/min
-
-    const fixAllLimiter = createRateLimiter(5, 60_000)    // 5 req/min
+    const rl = pluginConfig.rateLimits ?? {}
+    const windowMs = rl.windowMs ?? 60_000
+    const validateLimiter = createRateLimiter(rl.validate ?? 30, windowMs)
+    const fixLimiter = createRateLimiter(rl.fix ?? 20, windowMs)
+    const bulkLimiter = createRateLimiter(rl.bulk ?? 3, windowMs)
+    const dictionaryLimiter = createRateLimiter(rl.dictionary ?? 60, windowMs)
+    const fixAllLimiter = createRateLimiter(rl.fixAll ?? 5, windowMs)
 
     const validateHandler = createValidateHandler(pluginConfig)
     const fixHandler = createFixHandler(pluginConfig)
     const fixAllHandler = createFixAllHandler(pluginConfig)
     const bulkHandler = createBulkHandler(targetCollections, pluginConfig)
-    const statusHandler = createStatusHandler()
-    const dictListHandler = createDictionaryListHandler()
-    const dictAddHandler = createDictionaryAddHandler()
-    const dictDeleteHandler = createDictionaryDeleteHandler()
+    const statusHandler = createStatusHandler(pluginConfig)
+    const dictListHandler = createDictionaryListHandler(pluginConfig)
+    const dictAddHandler = createDictionaryAddHandler(pluginConfig)
+    const dictDeleteHandler = createDictionaryDeleteHandler(pluginConfig)
 
     config.endpoints = [
       ...(config.endpoints || []),
@@ -207,7 +209,10 @@ export const spellcheckPlugin =
       {
         path: `${basePath}/status`,
         method: 'get' as const,
-        handler: statusHandler,
+        handler: ((req) => {
+          if (!bulkLimiter.check(getClientIp(req))) return rateLimitResponse()
+          return statusHandler(req)
+        }) as import('payload').PayloadHandler,
       },
       {
         path: `${basePath}/dictionary`,
@@ -237,7 +242,11 @@ export const spellcheckPlugin =
         path: `${basePath}/collections`,
         method: 'get' as const,
         handler: (async (req) => {
-          if (!req.user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+          const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
+            const u = r.user as Record<string, unknown> | null | undefined
+            return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+          })
+          if (!req.user || !accessFn(req)) return Response.json({ error: 'Unauthorized' }, { status: 403 })
           return Response.json({ collections: targetCollections })
         }) as import('payload').PayloadHandler,
       },
@@ -250,16 +259,18 @@ export const spellcheckPlugin =
       if (!config.admin.components.views) config.admin.components.views = {}
 
       ;(config.admin.components.views as Record<string, unknown>).spellcheck = {
-        Component: '@consilioweb/spellcheck/views#SpellCheckView',
+        Component: `${pkgName}/views#SpellCheckView`,
         path: '/spellcheck',
       }
     }
 
     // 5. Add onInit hook to auto-fix schema (push:true missing columns)
-    const existingOnInit = config.onInit
-    config.onInit = async (payload) => {
-      if (existingOnInit) await existingOnInit(payload)
-      await autoFixSchema(payload)
+    if (pluginConfig.autoFixSchema !== false) {
+      const existingOnInit = config.onInit
+      config.onInit = async (payload) => {
+        if (existingOnInit) await existingOnInit(payload)
+        await autoFixSchema(payload)
+      }
     }
 
     return config

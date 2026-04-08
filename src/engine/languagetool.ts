@@ -8,9 +8,9 @@
 
 import type { SpellCheckIssue, SpellCheckPluginConfig } from '../types.js'
 
-const LANGUAGETOOL_API = 'https://api.languagetool.org/v2/check'
-const MAX_TEXT_LENGTH = 18_000
-const REQUEST_TIMEOUT = 30_000
+const DEFAULT_LANGUAGETOOL_API = 'https://api.languagetool.org/v2/check'
+const DEFAULT_MAX_TEXT_LENGTH = 18_000
+const DEFAULT_REQUEST_TIMEOUT = 30_000
 
 interface LTMatch {
   message: string
@@ -41,12 +41,17 @@ export async function checkWithLanguageTool(
   text: string,
   language: string,
   config: SpellCheckPluginConfig,
+  logger?: { error: (msg: string) => void },
 ): Promise<SpellCheckIssue[]> {
   if (!text.trim()) return []
 
+  const apiUrl = config.languageToolUrl || DEFAULT_LANGUAGETOOL_API
+  const maxTextLength = config.timeouts?.maxTextLengthLanguageTool ?? DEFAULT_MAX_TEXT_LENGTH
+  const requestTimeout = config.timeouts?.languageTool ?? DEFAULT_REQUEST_TIMEOUT
+
   // Truncate to API limit
-  const truncatedText = text.length > MAX_TEXT_LENGTH
-    ? text.slice(0, MAX_TEXT_LENGTH)
+  const truncatedText = text.length > maxTextLength
+    ? text.slice(0, maxTextLength)
     : text
 
   // Build disabled rules param
@@ -64,10 +69,10 @@ export async function checkWithLanguageTool(
   })
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  const timeoutId = setTimeout(() => controller.abort(), requestTimeout)
 
   try {
-    const response = await fetch(LANGUAGETOOL_API, {
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
@@ -85,10 +90,10 @@ export async function checkWithLanguageTool(
   } catch (error) {
     clearTimeout(timeoutId)
     if ((error as Error).name === 'AbortError') {
-      console.error('[spellcheck] LanguageTool request timed out')
+      logger?.error('[spellcheck] LanguageTool request timed out')
       return []
     }
-    console.error('[spellcheck] LanguageTool error:', error)
+    logger?.error(`[spellcheck] LanguageTool error: ${error instanceof Error ? error.message : error}`)
     return []
   }
 }

@@ -6,17 +6,25 @@
  */
 
 import type { PayloadHandler } from 'payload'
+import type { SpellCheckPluginConfig } from '../types.js'
 
 /** Maximum word length allowed in the dictionary */
 const MAX_WORD_LENGTH = 100
 
+/** Default access check: admin only */
+const defaultAccess = (r: { user?: Record<string, unknown> | null }): boolean => {
+  const u = r.user as Record<string, unknown> | null | undefined
+  return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
+}
+
 /**
  * GET — list all dictionary words sorted alphabetically.
  */
-export function createDictionaryListHandler(): PayloadHandler {
+export function createDictionaryListHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
   return async (req) => {
-    if (!req.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    const accessFn = pluginConfig?.access || defaultAccess
+    if (!req.user || !accessFn(req)) {
+      return Response.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
     try {
@@ -43,10 +51,11 @@ export function createDictionaryListHandler(): PayloadHandler {
  * POST — add one or more words to the dictionary.
  * Body: { word: string } or { words: string[] }
  */
-export function createDictionaryAddHandler(): PayloadHandler {
+export function createDictionaryAddHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
   return async (req) => {
-    if (!req.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    const accessFn = pluginConfig?.access || defaultAccess
+    if (!req.user || !accessFn(req)) {
+      return Response.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
     try {
@@ -61,7 +70,14 @@ export function createDictionaryAddHandler(): PayloadHandler {
 
       const wordsToAdd: string[] = []
       if (word) wordsToAdd.push(word)
-      if (Array.isArray(words)) wordsToAdd.push(...words)
+      if (Array.isArray(words)) {
+        // Validate and filter each element: must be a non-empty string, max 100 chars
+        const validWords = words.filter(
+          (w): w is string =>
+            typeof w === 'string' && w.trim().length > 0 && w.trim().length <= MAX_WORD_LENGTH,
+        )
+        wordsToAdd.push(...validWords)
+      }
 
       if (wordsToAdd.length === 0) {
         return Response.json({ error: 'Provide { word } or { words: [] }' }, { status: 400 })
@@ -128,10 +144,11 @@ export function createDictionaryAddHandler(): PayloadHandler {
  * DELETE — remove word(s) from the dictionary by ID.
  * Body: { id: string } or { ids: string[] }
  */
-export function createDictionaryDeleteHandler(): PayloadHandler {
+export function createDictionaryDeleteHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
   return async (req) => {
-    if (!req.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    const accessFn = pluginConfig?.access || defaultAccess
+    if (!req.user || !accessFn(req)) {
+      return Response.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
     try {

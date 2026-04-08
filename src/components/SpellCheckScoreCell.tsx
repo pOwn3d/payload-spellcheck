@@ -7,6 +7,12 @@
 
 import React, { useEffect, useState } from 'react'
 
+// Client-side score cache to avoid N+1 queries (one fetch per cell in list view).
+// Entries expire after CACHE_TTL ms. The cache is module-scoped so it persists
+// across re-renders but resets on page navigation (SPA client-side).
+const scoreCache = new Map<string, { score: number; issueCount: number; timestamp: number }>()
+const CACHE_TTL = 30_000 // 30 seconds
+
 interface SpellCheckScoreCellProps {
   rowData?: { id?: string | number; [key: string]: unknown }
   collectionSlug?: string
@@ -23,14 +29,28 @@ export const SpellCheckScoreCell: React.FC<SpellCheckScoreCellProps> = ({
   useEffect(() => {
     if (!rowData?.id || !collectionSlug) return
 
+    const cacheKey = `${collectionSlug}:${rowData.id}`
+    const cached = scoreCache.get(cacheKey)
+    const now = Date.now()
+
+    // Return cached value if still fresh
+    if (cached && (now - cached.timestamp) < CACHE_TTL) {
+      setScore(cached.score)
+      setIssueCount(cached.issueCount)
+      return
+    }
+
     fetch(
       `/api/spellcheck-results?where[docId][equals]=${rowData.id}&where[collection][equals]=${collectionSlug}&limit=1&depth=0`,
     )
       .then((res) => res.json())
       .then((data) => {
         if (data.docs?.[0]) {
-          setScore(data.docs[0].score)
-          setIssueCount(data.docs[0].issueCount ?? 0)
+          const s = data.docs[0].score
+          const ic = data.docs[0].issueCount ?? 0
+          setScore(s)
+          setIssueCount(ic)
+          scoreCache.set(cacheKey, { score: s, issueCount: ic, timestamp: Date.now() })
         }
       })
       .catch(() => {})

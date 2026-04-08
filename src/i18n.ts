@@ -39,6 +39,13 @@ export interface SpellcheckTranslations {
   category: string
   applied: string
   source: string
+  beforeAfter: string
+  hidePreview: string
+  manualEdit: string
+  backToSuggestion: string
+  manualCorrection: string
+  addToDict: string
+  addedToDict: string
 
   // Status
   excellent: string
@@ -84,6 +91,13 @@ const fr: SpellcheckTranslations = {
   category: 'Catégorie',
   applied: 'Corrigé',
   source: 'Source',
+  beforeAfter: 'Avant/Après',
+  hidePreview: 'Masquer',
+  manualEdit: 'Manuel',
+  backToSuggestion: 'Suggestion',
+  manualCorrection: 'Correction manuelle :',
+  addToDict: '+ Dico',
+  addedToDict: 'Ajouté au dico',
 
   excellent: 'Excellent',
   good: 'Bon',
@@ -127,6 +141,13 @@ const en: SpellcheckTranslations = {
   category: 'Category',
   applied: 'Fixed',
   source: 'Source',
+  beforeAfter: 'Before/After',
+  hidePreview: 'Hide',
+  manualEdit: 'Manual',
+  backToSuggestion: 'Suggestion',
+  manualCorrection: 'Manual correction:',
+  addToDict: '+ Dict',
+  addedToDict: 'Added to dict',
 
   excellent: 'Excellent',
   good: 'Good',

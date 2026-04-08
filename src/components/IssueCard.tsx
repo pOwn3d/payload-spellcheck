@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react'
 import type { SpellCheckIssue } from '../types.js'
+import type { SpellcheckTranslations } from '../i18n.js'
 
 interface IssueCardProps {
   issue: SpellCheckIssue
@@ -11,6 +12,8 @@ interface IssueCardProps {
   onIgnore?: (ruleId: string) => void
   onAddToDict?: (word: string) => void
   isFixed?: boolean
+  /** i18n translations — when omitted, falls back to French labels */
+  t?: SpellcheckTranslations
 }
 
 const styles = {
@@ -138,6 +141,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   onIgnore,
   onAddToDict,
   isFixed = false,
+  t,
 }) => {
   const [showDiff, setShowDiff] = useState(false)
   const [selectedReplacement, setSelectedReplacement] = useState(0)
@@ -181,7 +185,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
     return (
       <div style={styles.diff}>
         <div style={{ marginBottom: '4px', color: 'var(--theme-elevation-400)', fontSize: '10px', textTransform: 'uppercase' as const, letterSpacing: '0.5px' }}>
-          Avant / Après
+          {t?.beforeAfter ?? 'Avant / Après'}
         </div>
         <div>
           {ctx.slice(0, idx)}
@@ -222,7 +226,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
       {/* Suggestion or manual edit */}
       {!manualEdit && issue.replacements.length > 0 && (
         <div style={styles.suggestion}>
-          <span style={styles.suggestionLabel}>Suggestion :</span>
+          <span style={styles.suggestionLabel}>{t?.suggestion ?? 'Suggestion'} :</span>
           {issue.replacements.length > 1 ? (
             <select
               value={selectedReplacement}
@@ -251,7 +255,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
       {manualEdit && !isFixed && (
         <div style={{ marginBottom: '8px' }}>
           <div style={{ fontSize: '11px', color: 'var(--theme-elevation-500)', marginBottom: '4px' }}>
-            Correction manuelle :
+            {t?.manualCorrection ?? 'Correction manuelle :'}
           </div>
           <input
             type="text"
@@ -279,7 +283,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
             style={{ ...styles.btn, fontSize: '10px' }}
             onClick={() => setShowDiff(!showDiff)}
           >
-            {showDiff ? 'Masquer' : 'Avant/Après'}
+            {showDiff ? (t?.hidePreview ?? 'Masquer') : (t?.beforeAfter ?? 'Avant/Après')}
           </button>
         )}
         {!isFixed && (
@@ -291,7 +295,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
               if (!manualEdit) setManualValue(issue.original)
             }}
           >
-            {manualEdit ? 'Suggestion' : 'Manuel'}
+            {manualEdit ? (t?.backToSuggestion ?? 'Suggestion') : (t?.manualEdit ?? 'Manuel')}
           </button>
         )}
         {currentReplacement && onFix && !isFixed && (
@@ -300,7 +304,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
             style={styles.btnFix}
             onClick={() => onFix(issue.original, currentReplacement, issue.offset, issue.length)}
           >
-            Corriger
+            {t?.fix ?? 'Corriger'}
           </button>
         )}
         {onAddToDict && !isFixed && !addedToDict && issue.original && (
@@ -311,14 +315,14 @@ export const IssueCard: React.FC<IssueCardProps> = ({
               onAddToDict(issue.original)
               setAddedToDict(true)
             }}
-            title="Ajouter au dictionnaire"
+            title={t?.addToDict ?? 'Ajouter au dictionnaire'}
           >
-            + Dico
+            {t?.addToDict ?? '+ Dico'}
           </button>
         )}
         {addedToDict && (
           <span style={{ fontSize: '11px', color: 'var(--theme-success-500)' }}>
-            Ajouté au dico
+            {t?.addedToDict ?? 'Ajouté au dico'}
           </span>
         )}
         {onIgnore && !isFixed && (
@@ -327,12 +331,12 @@ export const IssueCard: React.FC<IssueCardProps> = ({
             style={styles.btn}
             onClick={() => onIgnore(issue.ruleId)}
           >
-            Ignorer
+            {t?.ignore ?? 'Ignorer'}
           </button>
         )}
         {isFixed && (
           <span style={{ fontSize: '11px', color: 'var(--theme-success-500)' }}>
-            Corrige
+            {t?.applied ?? 'Corrigé'}
           </span>
         )}
       </div>

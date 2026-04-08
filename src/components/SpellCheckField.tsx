@@ -14,6 +14,8 @@ import { useDocumentInfo } from '@payloadcms/ui'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
 import type { ReadabilityResult } from '../engine/readability.js'
+import { calculateScore } from '../engine/filters.js'
+import { useSpellcheckI18n } from './useSpellcheckI18n.js'
 
 const styles = {
   container: {
@@ -133,6 +135,7 @@ const styles = {
 
 export const SpellCheckField: React.FC = () => {
   const { id, collectionSlug } = useDocumentInfo()
+  const t = useSpellcheckI18n()
   const [result, setResult] = useState<SpellCheckResult | null>(null)
   const [readability, setReadability] = useState<ReadabilityResult | null>(null)
   const [resultDbId, setResultDbId] = useState<string | number | null>(null)
@@ -216,9 +219,11 @@ export const SpellCheckField: React.FC = () => {
     })
 
     const updatedCount = updatedIssues.length
-    const updatedScore = prev.wordCount > 0
-      ? Math.min(100, Math.max(0, Math.round(100 - (updatedCount / prev.wordCount * 1000))))
-      : prev.score
+    // Score formula must mirror calculateScore() in engine/filters.ts:
+    // score = 100 - (issuesPerHundredWords * 10), clamped to [0, 100]
+    const updatedScore = prev.wordCount > 0 && updatedCount > 0
+      ? Math.min(100, Math.max(0, Math.round(100 - (updatedCount / prev.wordCount) * 100 * 10)))
+      : 100
 
     setResult({ ...prev, issues: updatedIssues, issueCount: updatedCount, score: updatedScore })
 
@@ -308,6 +313,7 @@ export const SpellCheckField: React.FC = () => {
                 <IssueCard
                   key={`${issue.ruleId}-${issue.offset}-${i}`}
                   issue={issue}
+                  t={t}
                   onFix={handleFix}
                   onIgnore={() => {
                     removeIssue({ offset: issue.offset, ruleId: issue.ruleId })

@@ -1,5 +1,6 @@
-// Client-side exports — React components for Payload admin UI
-// "use client" is prepended by tsup onSuccess (see tsup.config.ts)
+// Client-side barrel — re-exports only, NO 'use client' directive here.
+// Individual component files get "use client" prepended by tsup onSuccess.
+// This pattern is required for Next.js 16 Turbopack compatibility.
 export { SpellCheckField } from './components/SpellCheckField.js'
 export { SpellCheckDashboard } from './components/SpellCheckDashboard.js'
 export { IssueCard } from './components/IssueCard.js'
