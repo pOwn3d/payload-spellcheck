@@ -105,11 +105,34 @@ export async function filterFalsePositives(
     // Skip if the original word is in custom dictionary (exact match)
     if (issue.original && dictionary.has(issue.original.toLowerCase())) return false
 
-    // Skip if original contains a dictionary word (partial match for compound words)
+    // Correspondance partielle pour les mots composés — volontairement bridée.
+    //
+    // La règle était `lower.includes(word) || word.includes(lower)`, dans les DEUX sens
+    // et sans longueur minimale. Deux conséquences, mesurées sur le dictionnaire réel :
+    //
+    //   · sens inverse (`word.includes(lower)`) : « API » figurant au dictionnaire, tout
+    //     signalement portant sur « ap », « pi » ou « api » était écarté — y compris de
+    //     vraies fautes sans rapport ;
+    //   · absence de seuil : une entrée de 2 ou 3 lettres étouffe des classes entières
+    //     de fautes, puisqu'elle est contenue dans une multitude de mots français.
+    //
+    // Un correcteur qui se tait à tort est pire qu'un correcteur absent : on le croit.
+    //
+    // On garde donc uniquement le sens utile — le mot signalé CONTIENT une entrée du
+    // dictionnaire, ce qui couvre les composés du type « Next.js-compatible » — avec un
+    // seuil de 5 caractères et une correspondance sur frontière de mot. La
+    // correspondance exacte, testée juste au-dessus, couvre tout le reste.
     if (issue.original) {
       const lower = issue.original.toLowerCase()
       for (const word of dictionaryWords) {
-        if (lower.includes(word) || word.includes(lower)) return false
+        if (word.length < 5) continue
+        if (!lower.includes(word)) continue
+        // Frontière de mot : « apiculture » ne doit pas être couvert par « api ».
+        const i = lower.indexOf(word)
+        const avant = i === 0 ? '' : lower[i - 1]
+        const apres = lower[i + word.length] ?? ''
+        const estFrontiere = (c: string) => c === '' || !/[a-zà-ÿ0-9]/i.test(c)
+        if (estFrontiere(avant) && estFrontiere(apres)) return false
       }
     }
 
