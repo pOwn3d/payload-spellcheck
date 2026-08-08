@@ -16,8 +16,8 @@ const sharedConfig: Partial<Options> = {
     'react/jsx-runtime',
     'next',
     'next/navigation',
-    '@consilioweb/spellcheck',
-    '@consilioweb/spellcheck/client',
+    '@consilioweb/payload-spellcheck',
+    '@consilioweb/payload-spellcheck/client',
   ],
 }
 

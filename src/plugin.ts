@@ -9,7 +9,7 @@
  * - SpellCheckResults collection for storing results
  *
  * Usage:
- *   import { spellcheckPlugin } from '@consilioweb/spellcheck'
+ *   import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
  *
  *   export default buildConfig({
  *     plugins: [
@@ -79,7 +79,7 @@ export const spellcheckPlugin =
     const checkOnSave = pluginConfig.checkOnSave !== false
     const addSidebarField = pluginConfig.addSidebarField !== false
     const addDashboardView = pluginConfig.addDashboardView !== false
-    const pkgName = pluginConfig.packageName || '@consilioweb/spellcheck'
+    const pkgName = pluginConfig.packageName || '@consilioweb/payload-spellcheck'
 
     // 1. Add afterChange hook + sidebar field to target collections
     if (config.collections) {

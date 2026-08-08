@@ -1,9 +1,26 @@
 # Changelog
 
-All notable changes to `@consilioweb/spellcheck` will be documented in this file.
+All notable changes to `@consilioweb/payload-spellcheck` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.14.0] - 2026-08-08 — Le dictionnaire ne bâillonne plus le correcteur
+
+### Fixed
+- **Une entrée de 2 ou 3 lettres étouffait des classes entières de fautes.** Le filtre du
+  dictionnaire personnalisé comparait dans les DEUX sens et sans longueur minimale :
+  `lower.includes(word) || word.includes(lower)`. Le sens inverse faisait écarter tout
+  signalement portant sur un *fragment* d'une entrée — « API » au dictionnaire rendait « ap »,
+  « pi » et « api » intouchables, y compris comme vraies fautes sans rapport. Et sans seuil,
+  une entrée courte est contenue dans une multitude de mots français : elle les rendait tous
+  invisibles. Un correcteur qui se tait à tort est pire qu'un correcteur absent — on le croit,
+  et on publie. Ne subsiste que le sens utile (le mot signalé *contient* une entrée), avec un
+  seuil de 5 caractères et une correspondance sur frontière de mot : « api » ne couvre plus
+  « apiculture ». La correspondance exacte couvrait déjà le reste.
+- **Nom de paquet corrigé dans les imports générés** : `@consilioweb/spellcheck` →
+  `@consilioweb/payload-spellcheck`. Le plugin produisait des chemins d'import vers un paquet
+  qui n'existe pas sous ce nom, dans `plugin.ts`, `types.ts` et la configuration de build.
 
 ## [0.13.0] - 2026-04-08
 

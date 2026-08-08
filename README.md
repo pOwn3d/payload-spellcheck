@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=2563EB&center=true&vCenter=true&width=600&lines=@consilioweb/spellcheck;Payload+CMS+Spellcheck+Plugin;LanguageTool+%2B+Claude+AI;Dashboard+%2B+Sidebar+%2B+Auto-check" alt="Typing SVG" />
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=2563EB&center=true&vCenter=true&width=600&lines=@consilioweb/payload-spellcheck;Payload+CMS+Spellcheck+Plugin;LanguageTool+%2B+Claude+AI;Dashboard+%2B+Sidebar+%2B+Auto-check" alt="Typing SVG" />
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@consilioweb/spellcheck"><img src="https://img.shields.io/npm/v/@consilioweb/spellcheck?color=2563eb&label=npm" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/@consilioweb/spellcheck"><img src="https://img.shields.io/npm/dm/@consilioweb/spellcheck?color=22c55e" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/@consilioweb/payload-spellcheck"><img src="https://img.shields.io/npm/v/@consilioweb/payload-spellcheck?color=2563eb&label=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@consilioweb/payload-spellcheck"><img src="https://img.shields.io/npm/dm/@consilioweb/payload-spellcheck?color=22c55e" alt="npm downloads" /></a>
   <img src="https://img.shields.io/badge/Payload_CMS-3.x-blue" alt="Payload CMS 3.x" />
   <img src="https://img.shields.io/badge/LanguageTool-API-green" alt="LanguageTool" />
   <img src="https://img.shields.io/badge/i18n-FR%20%2F%20EN-purple" alt="i18n" />
@@ -39,7 +39,7 @@
 
 ## About
 
-**@consilioweb/spellcheck** is a Payload CMS 3 plugin that adds real-time spelling and grammar checking to your admin panel. Powered by [LanguageTool](https://languagetool.org/) with optional Claude AI semantic analysis.
+**@consilioweb/payload-spellcheck** is a Payload CMS 3 plugin that adds real-time spelling and grammar checking to your admin panel. Powered by [LanguageTool](https://languagetool.org/) with optional Claude AI semantic analysis.
 
 | Feature | Description |
 |---------|-------------|
@@ -141,17 +141,45 @@
 
 <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
+## ⚠️ Migration from `@consilioweb/spellcheck`
+
+This package has been renamed from `@consilioweb/spellcheck` to `@consilioweb/payload-spellcheck`.
+
+**Automatic migration (recommended):**
+
+```bash
+npx @consilioweb/migrate
+```
+
+This will update your `package.json` and all imports automatically.
+
+**Manual migration:**
+
+```bash
+npm uninstall @consilioweb/spellcheck
+npm install @consilioweb/payload-spellcheck
+```
+
+Then update your imports:
+
+```diff
+- import { spellcheckPlugin } from '@consilioweb/spellcheck'
++ import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
+```
+
+---
+
 ## Installation
 
 ```bash
 # npm
-npm install @consilioweb/spellcheck
+npm install @consilioweb/payload-spellcheck
 
 # pnpm
-pnpm add @consilioweb/spellcheck
+pnpm add @consilioweb/payload-spellcheck
 
 # yarn
-yarn add @consilioweb/spellcheck
+yarn add @consilioweb/payload-spellcheck
 ```
 
 | Peer Dependency | Version |
@@ -169,7 +197,7 @@ Add the plugin to your Payload config:
 
 ```typescript
 // src/plugins/index.ts (or payload.config.ts)
-import { spellcheckPlugin } from '@consilioweb/spellcheck'
+import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
 
 export default buildConfig({
   plugins: [
@@ -284,7 +312,7 @@ spellcheckPlugin({
 | `warningThreshold` | `number` | `80` | Score en dessous duquel un avertissement est affiché |
 | `autoFixSchema` | `boolean` | `true` | Auto-fix missing DB columns on startup |
 | `access` | `function` | Admin-only | Custom access control function for endpoints (v0.13.0) |
-| `packageName` | `string` | `'@consilioweb/spellcheck'` | Custom package name for component paths — useful in monorepos (v0.13.0) |
+| `packageName` | `string` | `'@consilioweb/payload-spellcheck'` | Custom package name for component paths — useful in monorepos (v0.13.0) |
 | `trustProxy` | `boolean` | `false` | Trust x-forwarded-for header for IP-based rate limiting (v0.13.0) |
 | `rateLimits` | `object` | -- | Rate limiting overrides (see below) |
 | `timeouts` | `object` | -- | Timeout and limit overrides (see below) |
@@ -511,7 +539,7 @@ Both collections are hidden from the admin nav. The dictionary is managed via th
 
 ## Package Exports
 
-### Main Entry (`@consilioweb/spellcheck`)
+### Main Entry (`@consilioweb/payload-spellcheck`)
 
 ```typescript
 // Plugin
@@ -533,7 +561,7 @@ export { loadDictionaryWords, invalidateDictionaryCache } from './endpoints/dict
 export { getTranslations, getScoreLabel } from './i18n'
 ```
 
-### Client Entry (`@consilioweb/spellcheck/client`)
+### Client Entry (`@consilioweb/payload-spellcheck/client`)
 
 ```typescript
 export { SpellCheckField } from './components/SpellCheckField'
@@ -541,7 +569,7 @@ export { SpellCheckDashboard } from './components/SpellCheckDashboard'
 export { IssueCard } from './components/IssueCard'
 ```
 
-### Views Entry (`@consilioweb/spellcheck/views`)
+### Views Entry (`@consilioweb/payload-spellcheck/views`)
 
 ```typescript
 export { SpellCheckView } from './views/SpellCheckView'
@@ -567,7 +595,7 @@ npx spellcheck-uninstall
 ```
 
 This will:
-1. Remove all `@consilioweb/spellcheck` imports and plugin calls from your source files
+1. Remove all `@consilioweb/payload-spellcheck` imports and plugin calls from your source files
 2. Drop the `spellcheck_results` table and indexes from your database
 3. Remove the npm package
 4. Regenerate the import map

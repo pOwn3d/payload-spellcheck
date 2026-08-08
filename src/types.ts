@@ -83,7 +83,7 @@ export interface SpellCheckPluginConfig {
   /** Custom dictionary — words to never flag */
   customDictionary?: string[]
 
-  /** Package name used for component imports (default: '@consilioweb/spellcheck') */
+  /** Package name used for component imports (default: '@consilioweb/payload-spellcheck') */
   packageName?: string
   /** LanguageTool API URL (default: 'https://api.languagetool.org/v2/check') — use for self-hosted instances */
   languageToolUrl?: string

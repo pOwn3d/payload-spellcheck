@@ -1,6 +1,6 @@
 {
-  "name": "@consilioweb/spellcheck",
-  "version": "0.13.1",
+  "name": "@consilioweb/payload-spellcheck",
+  "version": "0.14.0",
   "description": "Payload CMS spellcheck plugin — LanguageTool + Claude AI fallback, dashboard, sidebar field, auto-check on save",
   "type": "module",
   "main": "./dist/index.cjs",
