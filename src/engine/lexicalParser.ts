@@ -14,7 +14,18 @@ import { type LexicalNode, SKIP_TYPES, SKIP_KEYS, PLAIN_TEXT_KEYS, isLexicalJson
 // ─── Types ──────────────────────────────────────────────────────────────
 
 export interface TextSegment {
+  /** Segment text as it appears in `fullText` (Lexical segments are trimmed) */
   text: string
+  /**
+   * Number of characters trimmed off the FRONT of the raw extraction to produce
+   * `text`. Lexical extraction emits a newline after every block, so a leading
+   * empty paragraph (or any leading whitespace) shifts every offset inside the
+   * tree by this much. The fix path walks the RAW tree, so it must add this back
+   * to a `text`-relative offset — otherwise the correction lands one or more
+   * characters early and silently mangles the content.
+   * Always 0 for `title` and `plain` segments (their text is used verbatim).
+   */
+  leadingTrim: number
   source:
     | { type: 'title' }
     | { type: 'lexical'; data: LexicalNode; topField: string }
@@ -44,23 +55,17 @@ export function extractAllTextFromDocWithSources(
 
   // 1. Title
   if (doc.title && typeof doc.title === 'string') {
-    rawSegments.push({ text: doc.title, source: { type: 'title' } })
+    rawSegments.push({ text: doc.title, leadingTrim: 0, source: { type: 'title' } })
   }
 
   // 2. Hero richText
   if (doc.hero?.richText) {
-    rawSegments.push({
-      text: extractTextFromLexical(doc.hero.richText),
-      source: { type: 'lexical', data: doc.hero.richText, topField: 'hero' },
-    })
+    rawSegments.push(buildLexicalSegment(doc.hero.richText, 'hero'))
   }
 
   // 3. Content field
   if (doc[contentField] && isLexicalJson(doc[contentField])) {
-    rawSegments.push({
-      text: extractTextFromLexical(doc[contentField]),
-      source: { type: 'lexical', data: doc[contentField], topField: contentField },
-    })
+    rawSegments.push(buildLexicalSegment(doc[contentField], contentField))
   }
 
   // 4. Layout blocks
@@ -75,6 +80,19 @@ export function extractAllTextFromDocWithSources(
   const fullText = segments.map((s) => s.text).join('\n').trim()
 
   return { fullText, segments }
+}
+
+/**
+ * Build a Lexical text segment, recording how much leading whitespace the trim
+ * removed so the fix path can translate offsets back to raw tree coordinates.
+ */
+function buildLexicalSegment(value: unknown, topField: string): TextSegment {
+  const raw = extractTextFromLexicalRaw(value)
+  return {
+    text: raw.trim(),
+    leadingTrim: raw.length - raw.trimStart().length,
+    source: { type: 'lexical', data: value as LexicalNode, topField },
+  }
 }
 
 /**
@@ -118,10 +136,7 @@ function extractBlockSegments(
 
     // Lexical JSON field
     if (isLexicalJson(value)) {
-      segments.push({
-        text: extractTextFromLexical(value),
-        source: { type: 'lexical', data: value as LexicalNode, topField },
-      })
+      segments.push(buildLexicalSegment(value, topField))
       continue
     }
 
@@ -134,6 +149,7 @@ function extractBlockSegments(
       if (PLAIN_TEXT_KEYS.has(key)) {
         segments.push({
           text: value,
+          leadingTrim: 0,
           source: { type: 'plain', parent: record, key, topField },
         })
       }
@@ -156,7 +172,18 @@ export function extractTextFromLexical(
   node: unknown,
   maxDepth = 50,
 ): string {
-  return extractRecursive(node as LexicalNode, 0, maxDepth).trim()
+  return extractTextFromLexicalRaw(node, maxDepth).trim()
+}
+
+/**
+ * Same as extractTextFromLexical but WITHOUT the final trim — these are the
+ * coordinates the fix path walks the tree in.
+ */
+export function extractTextFromLexicalRaw(
+  node: unknown,
+  maxDepth = 50,
+): string {
+  return extractRecursive(node as LexicalNode, 0, maxDepth)
 }
 
 function extractRecursive(

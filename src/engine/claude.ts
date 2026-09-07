@@ -23,17 +23,25 @@ interface ClaudeIssue {
 }
 
 /**
- * Check text with Claude API for semantic issues.
- * Returns SpellCheckIssue[] with source='claude'.
+ * Outcome of a Claude call — same rationale as LanguageToolOutcome: an empty
+ * array must not stand in for "the call failed".
  */
-export async function checkWithClaude(
+export type ClaudeOutcome =
+  | { ok: true; issues: SpellCheckIssue[] }
+  | { ok: false; reason: string }
+
+/**
+ * Check text with Claude API for semantic issues.
+ * Returns a discriminated outcome — prefer this over checkWithClaude().
+ */
+export async function runClaudeCheck(
   text: string,
   language: string,
   apiKey: string,
   config?: SpellCheckPluginConfig,
   logger?: { error: (msg: string) => void },
-): Promise<SpellCheckIssue[]> {
-  if (!text.trim() || !apiKey) return []
+): Promise<ClaudeOutcome> {
+  if (!text.trim() || !apiKey) return { ok: true, issues: [] }
 
   const maxTextLength = config?.timeouts?.maxTextLengthClaude ?? DEFAULT_MAX_TEXT_LENGTH
   const requestTimeout = config?.timeouts?.claude ?? DEFAULT_REQUEST_TIMEOUT
@@ -81,8 +89,9 @@ ${truncatedText}`
     clearTimeout(timeoutId)
 
     if (!response.ok) {
-      logger?.error(`[spellcheck] Claude API error: ${response.status}`)
-      return []
+      const reason = `Claude API error: ${response.status}`
+      logger?.error(`[spellcheck] ${reason}`)
+      return { ok: false, reason }
     }
 
     const data = (await response.json()) as ClaudeResponse
@@ -90,10 +99,10 @@ ${truncatedText}`
 
     // Extract JSON array from response
     const jsonMatch = responseText.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return []
+    if (!jsonMatch) return { ok: true, issues: [] }
 
     const issues: ClaudeIssue[] = JSON.parse(jsonMatch[0])
-    return issues.map((issue) => ({
+    return { ok: true, issues: issues.map((issue) => ({
       ruleId: `CLAUDE_${issue.category}`,
       category: issue.category,
       message: issue.message,
@@ -104,10 +113,28 @@ ${truncatedText}`
       original: issue.original,
       replacements: issue.suggestion ? [issue.suggestion] : [],
       source: 'claude' as const,
-    }))
+    })) }
   } catch (error) {
     clearTimeout(timeoutId)
-    logger?.error(`[spellcheck] Claude error: ${error instanceof Error ? error.message : error}`)
-    return []
+    const reason = error instanceof Error ? error.message : String(error)
+    logger?.error(`[spellcheck] Claude error: ${reason}`)
+    return { ok: false, reason }
   }
+}
+
+/**
+ * Backwards-compatible wrapper: returns [] when the call fails.
+ *
+ * @deprecated Use runClaudeCheck() to tell "no semantic issue" apart from
+ * "the call never went through".
+ */
+export async function checkWithClaude(
+  text: string,
+  language: string,
+  apiKey: string,
+  config?: SpellCheckPluginConfig,
+  logger?: { error: (msg: string) => void },
+): Promise<SpellCheckIssue[]> {
+  const outcome = await runClaudeCheck(text, language, apiKey, config, logger)
+  return outcome.ok ? outcome.issues : []
 }

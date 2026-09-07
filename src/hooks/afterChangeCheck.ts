@@ -5,57 +5,55 @@
 
 import type { CollectionAfterChangeHook } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
-import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
-import { checkWithLanguageTool } from '../engine/languagetool.js'
-import { filterFalsePositives, calculateScore } from '../engine/filters.js'
-import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
-import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
+import { recheckDocument } from '../utils/recheck.js'
+
+/**
+ * Should this save be skipped?
+ *
+ * Two loops to break:
+ *  - `context.skipSpellcheck` — set by our own /fix and /fix-all writes, which
+ *    would otherwise fire a fresh LanguageTool request per corrected word.
+ *  - autosave — the editor autosaves while typing; each tick used to ship the
+ *    whole document (up to 18 000 characters) to LanguageTool. On the free API
+ *    (1 req / 3 s) those requests fail in cascade, and a failed check used to
+ *    be stored as a perfect score.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function shouldSkip(context: any, req: any): boolean {
+  if (context?.skipSpellcheck || req?.context?.skipSpellcheck) return true
+  const autosave = req?.query?.autosave
+  return autosave === true || autosave === 'true'
+}
 
 export function createAfterChangeCheckHook(
   pluginConfig: SpellCheckPluginConfig,
 ): CollectionAfterChangeHook {
-  return ({ doc, collection, req }) => {
+  return ({ doc, collection, req, context }) => {
+    if (shouldSkip(context, req)) return doc
+
     // Fire-and-forget IIFE — does NOT block the save
     ;(async () => {
       try {
-        const contentField = pluginConfig.contentField || 'content'
-        const language = pluginConfig.language || 'fr'
-
-        // Extract text from all document fields
-        const text = extractAllTextFromDoc(doc, contentField)
-        if (!text) return
-
-        const wordCount = countWords(text)
-        let issues = await checkWithLanguageTool(text, language, pluginConfig)
-        issues = await filterFalsePositives(issues, pluginConfig, req.payload)
-
         const collectionSlug = typeof collection === 'string'
           ? collection
           : (collection as { slug: string }).slug
 
-        // Load existing result to get ignoredIssues
-        const existingDoc = await findSpellcheckResult(req.payload, String(doc.id), collectionSlug)
-        const ignoredIssues: IgnoredIssue[] = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc.ignoredIssues : []
+        const outcome = await recheckDocument(req.payload, collectionSlug, doc, pluginConfig)
 
-        // Filter out user-ignored issues
-        issues = filterIgnoredIssues(issues, ignoredIssues)
+        if (!outcome.ok) {
+          // Stay silent for the editor, but leave a trace: writing a fake
+          // "100/100, 0 issue" over the stored result is worse than no update.
+          req.payload.logger.warn(
+            `[spellcheck] Auto-check skipped for ${collectionSlug}/${doc.id}: ${outcome.reason}`,
+          )
+          return
+        }
 
-        const score = calculateScore(wordCount, issues.length)
+        if (outcome.skipped === 'empty') return
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const docAny = doc as any
-        await upsertSpellcheckResult(req.payload, String(doc.id), collectionSlug, {
-          title: docAny.title || '',
-          slug: docAny.slug || '',
-          score,
-          issueCount: issues.length,
-          wordCount,
-          issues: issues as unknown as Record<string, unknown>[],
-          ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
-          lastChecked: new Date().toISOString(),
-        })
-
-        req.payload.logger.info(`[spellcheck] Auto-check: ${collectionSlug}/${doc.id} — score ${score}, ${issues.length} issues`)
+        req.payload.logger.info(
+          `[spellcheck] Auto-check: ${collectionSlug}/${doc.id} — score ${outcome.score}, ${outcome.issueCount} issues`,
+        )
       } catch (err) {
         req.payload.logger.error(`[spellcheck] afterChange hook error: ${err instanceof Error ? err.message : err}`)
       }

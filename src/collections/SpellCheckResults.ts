@@ -4,18 +4,30 @@
  */
 
 import type { CollectionConfig } from 'payload'
+import type { SpellCheckPluginConfig } from '../types.js'
+import { createAccessGuard } from '../endpoints/access.js'
 
-export function createSpellCheckResultsCollection(): CollectionConfig {
+export function createSpellCheckResultsCollection(
+  pluginConfig?: SpellCheckPluginConfig,
+): CollectionConfig {
+  // Same gate as the endpoints. `!!req.user` used to let ANY authenticated
+  // account read draft titles/slugs/excerpts through the REST API — and, worse,
+  // write `issues` that /fix-all later applies to published documents with
+  // overrideAccess: true. The plugin writes to this collection internally with
+  // overrideAccess: true, so tightening it does not affect scans or fixes.
+  const guard = createAccessGuard(pluginConfig)
+  const allow = ({ req }: { req: { user?: unknown } }): boolean => guard.isAllowed(req)
+
   return {
     slug: 'spellcheck-results',
     admin: {
       hidden: true,
     },
     access: {
-      read: ({ req }) => !!req.user,
-      create: ({ req }) => !!req.user,
-      update: ({ req }) => !!req.user,
-      delete: ({ req }) => !!req.user,
+      read: allow,
+      create: allow,
+      update: allow,
+      delete: allow,
     },
     timestamps: false,
     fields: [

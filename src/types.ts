@@ -76,10 +76,22 @@ export interface SpellCheckPluginConfig {
   /** Anthropic API key for Claude fallback */
   anthropicApiKey?: string
 
-  /** LanguageTool rule IDs to skip */
+  /** LanguageTool rule IDs to skip — ADDED to the default skip list */
   skipRules?: string[]
-  /** LanguageTool categories to skip */
+  /** LanguageTool categories to skip — ADDED to the default skip list */
   skipCategories?: string[]
+  /**
+   * Replace the built-in default skip rules entirely (instead of adding to them).
+   * Pass `[]` to disable default rule filtering. `skipRules` still stacks on top.
+   * Import `DEFAULT_SKIP_RULES` to derive a list from the defaults.
+   */
+  overrideDefaultSkipRules?: string[]
+  /**
+   * Replace the built-in default skip categories entirely (instead of adding to them).
+   * Pass `[]` to disable default category filtering. `skipCategories` still stacks on top.
+   * Import `DEFAULT_SKIP_CATEGORIES` to derive a list from the defaults.
+   */
+  overrideDefaultSkipCategories?: string[]
   /** Custom dictionary — words to never flag */
   customDictionary?: string[]
 
@@ -92,6 +104,19 @@ export interface SpellCheckPluginConfig {
   /** Attempt to auto-fix missing schema columns on init (default: true) */
   autoFixSchema?: boolean
 
+  /**
+   * Trust `x-forwarded-for` / `x-real-ip` for the IP-based rate limiter
+   * (default: `true`).
+   *
+   * `true` — one bucket per forwarded client IP. Spoofable when no reverse proxy
+   * overwrites those headers, but that is the only setting that isolates callers
+   * from one another.
+   * `false` — every caller shares a single 'unknown' bucket, i.e. a global rate
+   * limit. Note that the limiter runs BEFORE authentication, so with `false` any
+   * anonymous request can exhaust the budget for every admin.
+   */
+  trustProxy?: boolean
+
   /** Rate limit overrides for API endpoints */
   rateLimits?: {
     /** Max requests per window for /validate (default: 30) */
@@ -102,6 +127,12 @@ export interface SpellCheckPluginConfig {
     fixAll?: number
     /** Max requests per window for /bulk (default: 3) */
     bulk?: number
+    /**
+     * Max requests per window for /status (default: 60).
+     * The dashboard polls this endpoint every 2 s during a scan, so it must NOT
+     * share the /bulk budget.
+     */
+    status?: number
     /** Max requests per window for /dictionary (default: 60) */
     dictionary?: number
     /** Rate limit window in milliseconds (default: 60000) */

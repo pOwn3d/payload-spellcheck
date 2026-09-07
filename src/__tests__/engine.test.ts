@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { extractTextFromLexical, countWords } from '../engine/lexicalParser.js'
-import { filterFalsePositives, calculateScore } from '../engine/filters.js'
+import {
+  filterFalsePositives,
+  calculateScore,
+  DEFAULT_SKIP_RULES,
+  DEFAULT_SKIP_CATEGORIES,
+} from '../engine/filters.js'
 import type { SpellCheckIssue, SpellCheckPluginConfig } from '../types.js'
 
 // --- Lexical Parser Tests ---
@@ -170,6 +175,67 @@ describe('filterFalsePositives', () => {
   it('should handle empty config', async () => {
     const issues = [baseIssue]
     expect(await filterFalsePositives(issues, {})).toHaveLength(1)
+  })
+
+  // Regression: the whole point of this plugin is reporting misspellings.
+  // 'TYPOS' (English) and MORFOLOGIK_RULE_FR_FR (French) used to sit in the
+  // default skip lists, so every spelling mistake was discarded before ever
+  // reaching the user. Guard both, with an empty config so only defaults apply.
+  it('should report English spelling mistakes by default', async () => {
+    const issues = [
+      { ...baseIssue, ruleId: 'MORFOLOGIK_RULE_EN_US', category: 'TYPOS', original: 'recieve' },
+    ]
+    expect(await filterFalsePositives(issues, {})).toHaveLength(1)
+  })
+
+  it('should report French spelling mistakes by default', async () => {
+    const issues = [
+      { ...baseIssue, ruleId: 'MORFOLOGIK_RULE_FR_FR', category: 'TYPOS', original: 'developement' },
+    ]
+    expect(await filterFalsePositives(issues, {})).toHaveLength(1)
+  })
+
+  it('should still let a consumer opt back into skipping spelling', async () => {
+    const issues = [
+      { ...baseIssue, ruleId: 'MORFOLOGIK_RULE_FR_FR', category: 'TYPOS', original: 'developement' },
+    ]
+    expect(await filterFalsePositives(issues, { skipCategories: ['TYPOS'] })).toHaveLength(0)
+  })
+
+  // Regression: skipRules/skipCategories are additive, so before
+  // overrideDefaultSkip* no default entry could be removed without forking.
+  it('should let a consumer remove a default skip rule', async () => {
+    const issues = [{ ...baseIssue, ruleId: 'DASH_RULE' }]
+    // Default behaviour: filtered out.
+    expect(await filterFalsePositives(issues, {})).toHaveLength(0)
+    // Override: the same rule now reaches the user.
+    const overridden = await filterFalsePositives(issues, {
+      overrideDefaultSkipRules: DEFAULT_SKIP_RULES.filter((r) => r !== 'DASH_RULE'),
+    })
+    expect(overridden).toHaveLength(1)
+  })
+
+  it('should let a consumer remove a default skip category', async () => {
+    const issues = [{ ...baseIssue, category: 'TYPOGRAPHY' }]
+    expect(await filterFalsePositives(issues, {})).toHaveLength(0)
+    const overridden = await filterFalsePositives(issues, {
+      overrideDefaultSkipCategories: DEFAULT_SKIP_CATEGORIES.filter((c) => c !== 'TYPOGRAPHY'),
+    })
+    expect(overridden).toHaveLength(1)
+  })
+
+  it('should disable all default filtering with an empty override', async () => {
+    const issues = [{ ...baseIssue, ruleId: 'WHITESPACE_RULE' }]
+    expect(await filterFalsePositives(issues, { overrideDefaultSkipRules: [] })).toHaveLength(1)
+  })
+
+  it('should keep skipRules additive on top of an override', async () => {
+    const issues = [{ ...baseIssue, ruleId: 'WHITESPACE_RULE' }]
+    const filtered = await filterFalsePositives(issues, {
+      overrideDefaultSkipRules: [],
+      skipRules: ['WHITESPACE_RULE'],
+    })
+    expect(filtered).toHaveLength(0)
   })
 })
 

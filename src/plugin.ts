@@ -28,6 +28,7 @@ import { createFixAllHandler } from './endpoints/fixAll.js'
 import { createBulkHandler, createStatusHandler } from './endpoints/bulk.js'
 import { createDictionaryListHandler, createDictionaryAddHandler, createDictionaryDeleteHandler } from './endpoints/dictionary.js'
 import { createRateLimiter, getClientIp, rateLimitResponse } from './endpoints/rateLimit.js'
+import { createAccessGuard } from './endpoints/access.js'
 import { createAfterChangeCheckHook } from './hooks/afterChangeCheck.js'
 
 /**
@@ -80,6 +81,7 @@ export const spellcheckPlugin =
     const addSidebarField = pluginConfig.addSidebarField !== false
     const addDashboardView = pluginConfig.addDashboardView !== false
     const pkgName = pluginConfig.packageName || '@consilioweb/payload-spellcheck'
+    const accessGuard = createAccessGuard(pluginConfig)
 
     // 1. Add afterChange hook + sidebar field to target collections
     if (config.collections) {
@@ -150,16 +152,25 @@ export const spellcheckPlugin =
     // 2. Add SpellCheckResults + SpellCheckDictionary collections
     config.collections = [
       ...(config.collections || []),
-      createSpellCheckResultsCollection(),
-      createSpellCheckDictionaryCollection(),
+      createSpellCheckResultsCollection(pluginConfig),
+      createSpellCheckDictionaryCollection(pluginConfig),
     ]
 
     // 3. Add API endpoints (with per-endpoint rate limiting)
+    // `trustProxy` was documented but never read: getClientIp() defaulted to
+    // trusting x-forwarded-for whatever the config said. Honour it here.
+    const trustProxy = pluginConfig.trustProxy !== false
+    const clientIp = (req: { headers: Headers }): string => getClientIp(req, trustProxy)
+
     const rl = pluginConfig.rateLimits ?? {}
     const windowMs = rl.windowMs ?? 60_000
     const validateLimiter = createRateLimiter(rl.validate ?? 30, windowMs)
     const fixLimiter = createRateLimiter(rl.fix ?? 20, windowMs)
     const bulkLimiter = createRateLimiter(rl.bulk ?? 3, windowMs)
+    // /status has its own budget: the dashboard polls it every 2 s during a
+    // scan, so sharing bulkLimiter (3 req/min) burned the budget in ~6 s and
+    // the UI then never saw the 'completed' transition.
+    const statusLimiter = createRateLimiter(rl.status ?? 60, windowMs)
     const dictionaryLimiter = createRateLimiter(rl.dictionary ?? 60, windowMs)
     const fixAllLimiter = createRateLimiter(rl.fixAll ?? 5, windowMs)
 
@@ -178,7 +189,7 @@ export const spellcheckPlugin =
         path: `${basePath}/validate`,
         method: 'post' as const,
         handler: ((req) => {
-          if (!validateLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!validateLimiter.check(clientIp(req))) return rateLimitResponse()
           return validateHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -186,7 +197,7 @@ export const spellcheckPlugin =
         path: `${basePath}/fix`,
         method: 'post' as const,
         handler: ((req) => {
-          if (!fixLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!fixLimiter.check(clientIp(req))) return rateLimitResponse()
           return fixHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -194,7 +205,7 @@ export const spellcheckPlugin =
         path: `${basePath}/fix-all`,
         method: 'post' as const,
         handler: ((req) => {
-          if (!fixAllLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!fixAllLimiter.check(clientIp(req))) return rateLimitResponse()
           return fixAllHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -202,7 +213,7 @@ export const spellcheckPlugin =
         path: `${basePath}/bulk`,
         method: 'post' as const,
         handler: ((req) => {
-          if (!bulkLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!bulkLimiter.check(clientIp(req))) return rateLimitResponse()
           return bulkHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -210,7 +221,7 @@ export const spellcheckPlugin =
         path: `${basePath}/status`,
         method: 'get' as const,
         handler: ((req) => {
-          if (!bulkLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!statusLimiter.check(clientIp(req))) return rateLimitResponse()
           return statusHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -218,7 +229,7 @@ export const spellcheckPlugin =
         path: `${basePath}/dictionary`,
         method: 'get' as const,
         handler: ((req) => {
-          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
           return dictListHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -226,7 +237,7 @@ export const spellcheckPlugin =
         path: `${basePath}/dictionary`,
         method: 'post' as const,
         handler: ((req) => {
-          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
           return dictAddHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -234,7 +245,7 @@ export const spellcheckPlugin =
         path: `${basePath}/dictionary`,
         method: 'delete' as const,
         handler: ((req) => {
-          if (!dictionaryLimiter.check(getClientIp(req))) return rateLimitResponse()
+          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
           return dictDeleteHandler(req)
         }) as import('payload').PayloadHandler,
       },
@@ -242,17 +253,25 @@ export const spellcheckPlugin =
         path: `${basePath}/collections`,
         method: 'get' as const,
         handler: (async (req) => {
-          const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
-            const u = r.user as Record<string, unknown> | null | undefined
-            return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-          })
-          if (!req.user || !accessFn(req)) return Response.json({ error: 'Unauthorized' }, { status: 403 })
+          if (!accessGuard.isAllowed(req)) return accessGuard.forbidden()
           return Response.json({ collections: targetCollections })
         }) as import('payload').PayloadHandler,
       },
     ]
 
     // 4. Add dashboard view
+    // Expose the resolved access check on config.custom so the (server-rendered)
+    // dashboard view can gate itself the same way the endpoints do. Registered
+    // views are referenced by path string, so this is the only channel through
+    // which they can see the plugin options.
+    config.custom = {
+      ...(config.custom || {}),
+      spellcheck: {
+        ...((config.custom?.spellcheck as Record<string, unknown>) || {}),
+        isAllowed: (req: { user?: unknown }) => accessGuard.isAllowed(req),
+      },
+    }
+
     if (addDashboardView) {
       if (!config.admin) config.admin = {}
       if (!config.admin.components) config.admin.components = {}

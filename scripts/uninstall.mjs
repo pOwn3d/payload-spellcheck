@@ -1,18 +1,43 @@
 #!/usr/bin/env node
 
 /**
- * Full uninstall for @consilioweb/spellcheck
+ * Full uninstall for this package (name read from its own package.json)
  * Removes all imports, plugin calls, DB tables, and the package itself.
  *
  * Usage: npx spellcheck-uninstall
  *   or:  npx spellcheck-uninstall --keep-data  (skip DB cleanup)
+ *   or:  npx spellcheck-uninstall --force-db   (drop tables even if the plugin
+ *                                               is not detected in this project)
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { execSync } from 'node:child_process'
 
-const PACKAGE_NAME = '@consilioweb/spellcheck'
+/**
+ * Read our own package name instead of hardcoding it. The literal used to be
+ * '@consilioweb/spellcheck' (the deprecated gateway package), so every
+ * `content.includes(PACKAGE_NAME)` check silently matched nothing: the
+ * uninstaller cleaned no source file and removed no dependency, yet still ran
+ * the irreversible DROP TABLE step. Deriving the name keeps the two in sync.
+ */
+function readOwnPackageName() {
+  try {
+    const pkgPath = new URL('../package.json', import.meta.url)
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+    if (typeof pkg.name === 'string' && pkg.name) return pkg.name
+  } catch {
+    // fall through to the literal below
+  }
+  return '@consilioweb/payload-spellcheck'
+}
+
+const PACKAGE_NAME = readOwnPackageName()
+
+/** Escape a string for safe inclusion in a RegExp source */
+function escapeRe(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 // Tables and indexes created by the plugin
 const DB_TABLES = ['spellcheck_results', 'spellcheck_dictionary']
@@ -23,8 +48,11 @@ const DB_INDEXES = [
   'spellcheck_dictionary_word_idx',
 ]
 
-// Regex to match any import line from @consilioweb/spellcheck
-const IMPORT_RE = /^\s*import\s+(?:type\s+)?(?:\{[^}]*\}|[\w]+)\s+from\s+['"]@consilioweb\/spellcheck(?:\/[^'"]*)?['"]\s*;?\s*$/gm
+// Regex to match any import line from this package (built from PACKAGE_NAME)
+const IMPORT_RE = new RegExp(
+  `^\\s*import\\s+(?:type\\s+)?(?:\\{[^}]*\\}|[\\w]+)\\s+from\\s+['"]${escapeRe(PACKAGE_NAME)}(?:\\/[^'"]*)?['"]\\s*;?\\s*$`,
+  'gm',
+)
 
 // ── Helpers ──────────────────────────────────────────────
 
@@ -70,11 +98,16 @@ function findSourceFiles(dir) {
 }
 
 /**
- * Extract imported names from @consilioweb/spellcheck imports
+ * Extract imported names from this package's imports.
+ * Built from PACKAGE_NAME — it used to hardcode the deprecated gateway name,
+ * so no imported symbol was ever collected and no plugin call was removed.
  */
 function extractImportedNames(content) {
   const names = []
-  const re = /^\s*import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]@consilioweb\/spellcheck(?:\/[^'"]*)?['"]\s*;?\s*$/gm
+  const re = new RegExp(
+    `^\\s*import\\s+(?:type\\s+)?\\{([^}]*)\\}\\s+from\\s+['"]${escapeRe(PACKAGE_NAME)}(?:\\/[^'"]*)?['"]\\s*;?\\s*$`,
+    'gm',
+  )
   let match
   while ((match = re.exec(content)) !== null) {
     for (const spec of match[1].split(',')) {
@@ -189,6 +222,24 @@ function processFile(filePath) {
 }
 
 /**
+ * Check whether the host project declares this package as a dependency.
+ * Used as evidence that the plugin is really installed here.
+ */
+function isDeclaredDependency(projectDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf-8'))
+    return Boolean(
+      pkg.dependencies?.[PACKAGE_NAME] ||
+      pkg.devDependencies?.[PACKAGE_NAME] ||
+      pkg.peerDependencies?.[PACKAGE_NAME] ||
+      pkg.optionalDependencies?.[PACKAGE_NAME],
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
  * Find SQLite DB files in the project
  */
 function findDatabaseFiles(projectDir) {
@@ -238,8 +289,15 @@ function cleanDatabase(dbPath) {
   // Just log it as manual step
 
   const sql = statements.join('\n')
-  const result = runSilent(`sqlite3 "${dbPath}" "${sql}"`, path.dirname(dbPath))
-  return result !== undefined
+  // runSilent() swallows errors and returns '' both on success (no output) and
+  // on failure, so `result !== undefined` was always true — the script reported
+  // "Cleaned" even when sqlite3 was missing. Use the exit code instead.
+  try {
+    execSync(`sqlite3 "${dbPath}" "${sql}"`, { cwd: path.dirname(dbPath), stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 // ── Main ──────────────────────────────────────────────
@@ -249,9 +307,10 @@ function main() {
   const srcDir = path.join(projectDir, 'src')
   const pm = detectPackageManager(projectDir)
   const keepData = process.argv.includes('--keep-data')
+  const forceDb = process.argv.includes('--force-db')
 
   console.log('')
-  console.log('  \x1b[36m@consilioweb/spellcheck\x1b[0m — Full Uninstall')
+  console.log(`  \x1b[36m${PACKAGE_NAME}\x1b[0m — Full Uninstall`)
   console.log('  ─────────────────────────────────────────────')
   console.log(`  Project: \x1b[33m${projectDir}\x1b[0m`)
   console.log(`  Package manager: \x1b[33m${pm}\x1b[0m`)
@@ -260,6 +319,10 @@ function main() {
 
   // ── Step 1: Clean source files ──
   console.log('  \x1b[36m[1/4]\x1b[0m Cleaning source files...')
+
+  // Tracks whether this project actually uses the plugin. The DROP TABLE step
+  // is irreversible, so it must not run when nothing was found to uninstall.
+  let sourceCleaned = false
 
   if (!fs.existsSync(srcDir)) {
     console.log('  \x1b[33m⚠\x1b[0m  No src/ directory found. Skipping code cleanup.')
@@ -277,6 +340,8 @@ function main() {
       }
     }
 
+    sourceCleaned = modified.length > 0
+
     if (modified.length === 0) {
       console.log('  \x1b[32m✓\x1b[0m  No references found in source files.')
     } else {
@@ -287,7 +352,20 @@ function main() {
   console.log('')
 
   // ── Step 2: Clean database ──
-  if (!keepData) {
+  // Gated on evidence that the plugin was really installed here (step 1 cleaned
+  // a file, or the dependency is declared and will be removed by step 3).
+  // Dropping the tables is the only irreversible action of this script; it used
+  // to run unconditionally, even on projects that never had the plugin.
+  const declaredAsDependency = isDeclaredDependency(projectDir)
+  const pluginDetected = sourceCleaned || declaredAsDependency || forceDb
+
+  if (!keepData && !pluginDetected) {
+    console.log('  \x1b[36m[2/4]\x1b[0m Cleaning database...')
+    console.log(`  \x1b[33m⚠\x1b[0m  ${PACKAGE_NAME} was not found in this project`)
+    console.log('  \x1b[33m⚠\x1b[0m  (no source reference, not in package.json dependencies).')
+    console.log('  \x1b[33m⚠\x1b[0m  Skipping the irreversible DROP TABLE step.')
+    console.log('  \x1b[90m     Force it with --force-db if you know the tables are there.\x1b[0m')
+  } else if (!keepData) {
     console.log('  \x1b[36m[2/4]\x1b[0m Cleaning database...')
 
     const dbFiles = findDatabaseFiles(projectDir)

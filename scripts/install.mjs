@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Post-install setup for @consilioweb/spellcheck
+ * Post-install setup for this package (name read from its own package.json)
  * Automatically adds the plugin to the Payload config.
  *
  * Usage: npx spellcheck-install
@@ -12,7 +12,23 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execSync } from 'node:child_process'
 
-const PACKAGE_NAME = '@consilioweb/spellcheck'
+/**
+ * Read our own package name instead of hardcoding it. The literal used to be
+ * '@consilioweb/spellcheck' (the deprecated gateway package), so the installer
+ * injected an import pointing at a package the project does not depend on.
+ */
+function readOwnPackageName() {
+  try {
+    const pkgPath = new URL('../package.json', import.meta.url)
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+    if (typeof pkg.name === 'string' && pkg.name) return pkg.name
+  } catch {
+    // fall through to the literal below
+  }
+  return '@consilioweb/payload-spellcheck'
+}
+
+const PACKAGE_NAME = readOwnPackageName()
 
 // ── Helpers ──────────────────────────────────────────────
 
@@ -113,7 +129,7 @@ function main() {
   const config = parseArgs()
 
   console.log('')
-  console.log('  \x1b[36m@consilioweb/spellcheck\x1b[0m — Install')
+  console.log(`  \x1b[36m${PACKAGE_NAME}\x1b[0m — Install`)
   console.log('  ─────────────────────────────────────────────')
   console.log(`  Project: \x1b[33m${projectDir}\x1b[0m`)
   console.log(`  Package manager: \x1b[33m${pm}\x1b[0m`)
@@ -169,8 +185,9 @@ function main() {
     checkOnSave: true,
     addSidebarField: true,
     addDashboardView: true,
-    skipRules: ['FR_SPELLING_RULE', 'WHITESPACE_RULE'],
-    skipCategories: ['TYPOGRAPHY', 'STYLE'],
+    // Do NOT add spelling rules/categories here (FR_SPELLING_RULE, TYPOS,
+    // MORFOLOGIK_*): they carry the misspellings this plugin exists to report.
+    // Use customDictionary for legitimate proper nouns instead.
     customDictionary: ['Next.js', 'Payload', 'TypeScript', 'SEO'],
   }),`
 

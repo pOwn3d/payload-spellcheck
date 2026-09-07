@@ -10,12 +10,13 @@
 import type { Payload, PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckResult } from '../types.js'
 import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
-import { checkWithLanguageTool } from '../engine/languagetool.js'
+import { runLanguageToolCheck } from '../engine/languagetool.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 import { analyzeReadability } from '../engine/readability.js'
 import { checkConsistency } from '../engine/consistency.js'
 import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
 import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
+import { createAccessGuard } from './access.js'
 
 const DEFAULT_RATE_LIMIT_DELAY = 3_000 // 3 seconds between LanguageTool API calls
 const DEFAULT_STALE_TIMEOUT = 10 * 60 * 1000 // 10 minutes — consider job dead if no progress
@@ -32,6 +33,8 @@ interface ScanJob {
   currentDoc: string
   totalIssues: number
   totalDocuments: number
+  /** Documents whose check could not run (LanguageTool unreachable, query error) */
+  failed: number
   averageScore: number
   startedAt: string
   completedAt: string | null
@@ -77,25 +80,44 @@ async function runBulkScan(
     const docsByCollection: Map<string, Array<{ id: string | number; [k: string]: unknown }>> = new Map()
 
     for (const collectionSlug of collectionsToScan) {
-      const idsForCollection = idsFilter
-        ? idsFilter.filter((i) => i.collection === collectionSlug).map((i) => i.id)
-        : null
+      // Isolate each collection: a single bad query used to abort the whole scan
+      // (status 'error', zero document processed). Same pattern as the per-doc
+      // try/catch further down.
+      try {
+        const idsForCollection = idsFilter
+          ? idsFilter.filter((i) => i.collection === collectionSlug).map((i) => i.id)
+          : null
 
-      const allDocs = await payload.find({
-        collection: collectionSlug,
-        limit: 0,
-        depth: 0, // depth:0 — must match fix.ts for offset alignment
-        draft: true, // Read latest version (including unpublished edits)
-        overrideAccess: true,
-        where: {
-          ...(idsForCollection
+        // `_status` only exists on collections with versions.drafts enabled.
+        // Querying it elsewhere throws a QueryError from validateQueryPaths —
+        // which overrideAccess does NOT bypass — and a collection without drafts
+        // is a perfectly ordinary configuration.
+        const hasDrafts = Boolean(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (payload.collections as any)?.[collectionSlug]?.config?.versions?.drafts,
+        )
+
+        const allDocs = await payload.find({
+          collection: collectionSlug,
+          limit: 0,
+          depth: 0, // depth:0 — must match fix.ts for offset alignment
+          // Read latest version (including unpublished edits)
+          ...(hasDrafts ? { draft: true } : {}),
+          overrideAccess: true,
+          where: idsForCollection
             ? { id: { in: idsForCollection } }
-            : { _status: { equals: 'published' } }),
-        },
-      })
+            : hasDrafts
+              ? { _status: { equals: 'published' } }
+              : {},
+        })
 
-      docsByCollection.set(collectionSlug, allDocs.docs)
-      totalToScan += allDocs.docs.length
+        docsByCollection.set(collectionSlug, allDocs.docs)
+        totalToScan += allDocs.docs.length
+      } catch (collErr) {
+        payload.logger.error(
+          `[spellcheck/bulk] Skipping collection "${collectionSlug}": ${collErr instanceof Error ? collErr.message : collErr}`,
+        )
+      }
     }
 
     if (currentJob) {
@@ -107,6 +129,7 @@ async function runBulkScan(
     let processed = 0
     let totalIssues = 0
     let skipped = 0
+    let failed = 0
 
     for (const collectionSlug of collectionsToScan) {
       const docs = docsByCollection.get(collectionSlug) || []
@@ -135,9 +158,20 @@ async function runBulkScan(
 
           const wordCount = countWords(text)
 
-          // Check with LanguageTool
-          let issues = await checkWithLanguageTool(text, language, pluginConfig)
-          issues = await filterFalsePositives(issues, pluginConfig, payload)
+          // Check with LanguageTool. On failure, count the document as failed
+          // and move on: writing a 0-issue / score-100 result would overwrite a
+          // previous result that held real mistakes.
+          const outcome = await runLanguageToolCheck(text, language, pluginConfig, payload.logger)
+          if (!outcome.ok) {
+            failed++
+            if (currentJob) currentJob.failed = failed
+            payload.logger.warn(
+              `[spellcheck/bulk] Check failed for "${docTitle}": ${outcome.reason} — result left untouched`,
+            )
+            await sleep(rateLimitDelay)
+            continue
+          }
+          let issues = await filterFalsePositives(outcome.issues, pluginConfig, payload)
 
           // Load existing result to get ignoredIssues
           const existingDoc = await findSpellcheckResult(payload, String(doc.id), collectionSlug)
@@ -213,10 +247,11 @@ async function runBulkScan(
       currentJob.averageScore = averageScore
       currentJob.totalDocuments = processed
       currentJob.totalIssues = totalIssues
+      currentJob.failed = failed
       currentJob.lastActivity = Date.now()
     }
 
-    payload.logger.info(`[spellcheck/bulk] Scan completed: ${processed} docs (${skipped} skipped), ${totalIssues} issues, avg score ${averageScore}`)
+    payload.logger.info(`[spellcheck/bulk] Scan completed: ${processed} docs (${skipped} skipped, ${failed} failed), ${totalIssues} issues, avg score ${averageScore}`)
   } catch (error) {
     payload.logger.error(`[spellcheck/bulk] Scan error: ${error instanceof Error ? error.message : error}`)
     if (currentJob) {
@@ -237,16 +272,11 @@ export function createBulkHandler(
   targetCollections: string[],
   pluginConfig: SpellCheckPluginConfig,
 ): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
     try {
       // RBAC: check access (default: admin only)
-      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
-        const u = r.user as Record<string, unknown> | null | undefined
-        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-      })
-      if (!req.user || !accessFn(req)) {
-        return Response.json({ error: 'Unauthorized' }, { status: 403 })
-      }
+      if (!guard.isAllowed(req)) return guard.forbidden()
 
       const staleTimeout = pluginConfig.timeouts?.bulkStaleTimeout ?? DEFAULT_STALE_TIMEOUT
 
@@ -276,6 +306,25 @@ export function createBulkHandler(
         }
       }
 
+      // Collection allowlist. /bulk was the only endpoint the 0.13.0 hardening
+      // missed: `collection` and every `ids[].collection` went straight into
+      // payload.find({ overrideAccess: true }), so any allowed caller could scan
+      // an arbitrary collection and ship its text to api.languagetool.org.
+      if (targetCollection !== undefined && !targetCollections.includes(targetCollection)) {
+        return Response.json({ error: 'Collection not allowed' }, { status: 403 })
+      }
+      if (Array.isArray(ids)) {
+        const hasForbidden = ids.some(
+          (entry) =>
+            !entry ||
+            typeof entry.collection !== 'string' ||
+            !targetCollections.includes(entry.collection),
+        )
+        if (hasForbidden) {
+          return Response.json({ error: 'Collection not allowed' }, { status: 403 })
+        }
+      }
+
       const scanSpecificIds = Array.isArray(ids) && ids.length > 0
 
       const collectionsToScan = scanSpecificIds
@@ -294,6 +343,7 @@ export function createBulkHandler(
         currentDoc: '',
         totalIssues: 0,
         totalDocuments: 0,
+        failed: 0,
         averageScore: 0,
         startedAt: new Date().toISOString(),
         completedAt: null,
@@ -320,15 +370,10 @@ export function createBulkHandler(
  * GET handler — return current scan status/progress.
  */
 export function createStatusHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
     // RBAC: check access (default: admin only)
-    const accessFn = pluginConfig?.access || ((r: { user?: Record<string, unknown> | null }) => {
-      const u = r.user as Record<string, unknown> | null | undefined
-      return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-    })
-    if (!req.user || !accessFn(req)) {
-      return Response.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    if (!guard.isAllowed(req)) return guard.forbidden()
 
     const staleTimeout = pluginConfig?.timeouts?.bulkStaleTimeout ?? DEFAULT_STALE_TIMEOUT
 

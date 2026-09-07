@@ -7,25 +7,19 @@
 
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
+import { createAccessGuard } from './access.js'
 
 /** Maximum word length allowed in the dictionary */
 const MAX_WORD_LENGTH = 100
 
-/** Default access check: admin only */
-const defaultAccess = (r: { user?: Record<string, unknown> | null }): boolean => {
-  const u = r.user as Record<string, unknown> | null | undefined
-  return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-}
 
 /**
  * GET — list all dictionary words sorted alphabetically.
  */
 export function createDictionaryListHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
-    const accessFn = pluginConfig?.access || defaultAccess
-    if (!req.user || !accessFn(req)) {
-      return Response.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    if (!guard.isAllowed(req)) return guard.forbidden()
 
     try {
       const result = await req.payload.find({
@@ -52,11 +46,9 @@ export function createDictionaryListHandler(pluginConfig?: SpellCheckPluginConfi
  * Body: { word: string } or { words: string[] }
  */
 export function createDictionaryAddHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
-    const accessFn = pluginConfig?.access || defaultAccess
-    if (!req.user || !accessFn(req)) {
-      return Response.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    if (!guard.isAllowed(req)) return guard.forbidden()
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,7 +109,7 @@ export function createDictionaryAddHandler(pluginConfig?: SpellCheckPluginConfig
             collection: 'spellcheck-dictionary',
             data: {
               word: cleaned,
-              addedBy: typeof req.user.id !== 'undefined' ? req.user.id : undefined,
+              addedBy: req.user?.id ?? undefined,
             },
             overrideAccess: true,
           })
@@ -145,11 +137,9 @@ export function createDictionaryAddHandler(pluginConfig?: SpellCheckPluginConfig
  * Body: { id: string } or { ids: string[] }
  */
 export function createDictionaryDeleteHandler(pluginConfig?: SpellCheckPluginConfig): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
-    const accessFn = pluginConfig?.access || defaultAccess
-    if (!req.user || !accessFn(req)) {
-      return Response.json({ error: 'Unauthorized' }, { status: 403 })
-    }
+    if (!guard.isAllowed(req)) return guard.forbidden()
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

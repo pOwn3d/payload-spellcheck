@@ -266,7 +266,17 @@ export const SpellCheckDashboard: React.FC = () => {
       const docs: typeof allDocs = []
       for (const col of collections) {
         try {
-          const res = await fetch(`/api/${col}?limit=0&depth=0&where[_status][equals]=published`)
+          // `_status` only exists when the collection has drafts enabled;
+          // elsewhere the query is rejected with a 400. Retry unfiltered rather
+          // than swallowing the error and showing an empty document list.
+          let res = await fetch(`/api/${col}?limit=0&depth=0&where[_status][equals]=published`)
+          if (!res.ok) {
+            res = await fetch(`/api/${col}?limit=0&depth=0`)
+          }
+          if (!res.ok) {
+            console.warn(`[spellcheck] Could not list "${col}" (HTTP ${res.status})`)
+            continue
+          }
           const data = await res.json()
           if (data.docs) {
             for (const doc of data.docs) {
@@ -278,7 +288,9 @@ export const SpellCheckDashboard: React.FC = () => {
               })
             }
           }
-        } catch { /* collection might not exist */ }
+        } catch (err) {
+          console.warn(`[spellcheck] Could not list "${col}":`, err)
+        }
       }
       setAllDocs(docs)
     } finally {
@@ -330,13 +342,25 @@ export const SpellCheckDashboard: React.FC = () => {
   const [scanTotal, setScanTotal] = useState(0)
   const [scanCurrentDoc, setScanCurrentDoc] = useState('')
 
+  // Backoff deadline for /status polling (epoch ms). A silent `return` on 429
+  // meant the poll never saw the 'completed' transition, so the table was never
+  // reloaded and the UI stayed on "Analyse en cours…" over stale results.
+  const statusBackoffUntil = useRef(0)
+
   // Poll scan status every 2 seconds while scanning
   useEffect(() => {
     if (!scanning) return
+    statusBackoffUntil.current = 0
 
     const interval = setInterval(async () => {
+      if (Date.now() < statusBackoffUntil.current) return
       try {
         const res = await fetch('/api/spellcheck/status')
+        if (res.status === 429) {
+          const retryAfter = Number(res.headers.get('Retry-After')) || 10
+          statusBackoffUntil.current = Date.now() + retryAfter * 1000
+          return
+        }
         if (!res.ok) return
         const data = await res.json()
 
@@ -377,8 +401,11 @@ export const SpellCheckDashboard: React.FC = () => {
   // Check if a scan is already running on mount
   useEffect(() => {
     fetch('/api/spellcheck/status')
-      .then((res) => res.json())
+      // Without the res.ok guard, a 429 body ({ error: ... }) was parsed as a
+      // status payload and read as "no scan running".
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        if (!data) return
         if (data.status === 'running') {
           setScanning(true)
           setScanCurrent(data.current || 0)
