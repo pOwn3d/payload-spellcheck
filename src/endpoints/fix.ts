@@ -10,20 +10,17 @@
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
 import { applyFix } from './fixCore.js'
+import { realignStoredResult } from '../utils/realignIssues.js'
+import { createAccessGuard } from './access.js'
 
 export function createFixHandler(
   pluginConfig: SpellCheckPluginConfig,
 ): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
     try {
       // RBAC: check access (default: admin only)
-      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
-        const u = r.user as Record<string, unknown> | null | undefined
-        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-      })
-      if (!req.user || !accessFn(req)) {
-        return Response.json({ error: 'Unauthorized' }, { status: 403 })
-      }
+      if (!guard.isAllowed(req)) return guard.forbidden()
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json()
@@ -65,8 +62,24 @@ export function createFixHandler(
         req.payload.logger,
       )
 
-      if (!result.success) {
-        return Response.json(result)
+      // The write above carries `context: { skipSpellcheck: true }`, so the
+      // afterChange hook will NOT refresh the stored result: every issue still
+      // recorded for this document keeps an offset computed before this
+      // correction. Left alone, the next "Fix all" — which is strict on
+      // purpose — rejects all of them. Re-align them from the applied span
+      // instead of paying a full LanguageTool round-trip per clicked word.
+      if (result.success && typeof result.appliedOffset === 'number') {
+        try {
+          await realignStoredResult(req.payload, collection, String(id), {
+            offset: result.appliedOffset,
+            length: result.appliedLength ?? original.length,
+            replacementLength: replacement.length,
+          })
+        } catch (err) {
+          req.payload.logger.warn(
+            `[spellcheck/fix] Could not re-align stored issues: ${err instanceof Error ? err.message : err}`,
+          )
+        }
       }
 
       return Response.json(result)

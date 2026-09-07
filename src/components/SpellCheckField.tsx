@@ -2,8 +2,10 @@
  * SpellCheckField — sidebar field component for the Payload editor.
  * Shows spellcheck score + issues for the current document.
  *
- * After a fix or ignore, the issue is removed from the list (optimistic update)
- * and the change is persisted to the spellcheck-results collection.
+ * After a fix or ignore, the issue is removed from the list (optimistic update).
+ * On the ignore path the change is persisted here; on the fix path the /fix
+ * endpoint owns the write (it re-aligns the remaining offsets), so the client
+ * updates its own state only.
  */
 
 'use client'
@@ -203,8 +205,12 @@ export const SpellCheckField: React.FC = () => {
     }
   }, [id, collectionSlug, loading])
 
-  // Remove an issue from the result (optimistic UI + persist to DB)
-  const removeIssue = useCallback((matcher: { offset?: number; original?: string; ruleId?: string }) => {
+  // Remove an issue from the result (optimistic UI + persist to DB).
+  // `persist: false` when the server already rewrote the row for us — see handleFix.
+  const removeIssue = useCallback((
+    matcher: { offset?: number; original?: string; ruleId?: string },
+    options?: { persist?: boolean },
+  ) => {
     const prev = resultRef.current
     if (!prev) return
 
@@ -227,7 +233,7 @@ export const SpellCheckField: React.FC = () => {
     setResult({ ...prev, issues: updatedIssues, issueCount: updatedCount, score: updatedScore })
 
     // Persist to DB (fire-and-forget)
-    if (resultDbIdRef.current) {
+    if (options?.persist !== false && resultDbIdRef.current) {
       fetch(`/api/spellcheck-results/${resultDbIdRef.current}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -247,7 +253,10 @@ export const SpellCheckField: React.FC = () => {
       })
 
       if (res.ok) {
-        removeIssue({ offset, original })
+        // No PATCH here: /fix already rewrote the stored result with the
+        // remaining issues re-aligned on the corrected text. Sending our own
+        // list back would put the stale offsets right back in the database.
+        removeIssue({ offset, original }, { persist: false })
       }
     } catch {
       // ignore

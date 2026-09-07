@@ -6,14 +6,21 @@
 import type { SpellCheckIssue, SpellCheckPluginConfig } from '../types.js'
 import { loadDictionaryWords } from '../endpoints/dictionary.js'
 
-/** Default rules to skip (common false positives for web content) */
-const DEFAULT_SKIP_RULES = new Set([
+/**
+ * Default rules to skip (common false positives for web content).
+ * Exported so consumers can derive a custom list from it, e.g.
+ * `overrideDefaultSkipRules: DEFAULT_SKIP_RULES.filter((r) => r !== 'DASH_RULE')`.
+ */
+export const DEFAULT_SKIP_RULES: readonly string[] = Object.freeze([
   'WHITESPACE_RULE',
   'COMMA_PARENTHESIS_WHITESPACE',
   'UNPAIRED_BRACKETS',
   'UPPERCASE_SENTENCE_START',     // Headings/titles don't start with uppercase
   'FRENCH_WHITESPACE',            // Non-breaking spaces are inconsistent in CMS
-  'MORFOLOGIK_RULE_FR_FR',        // Overly aggressive French spelling (flags proper nouns)
+  // MORFOLOGIK_RULE_FR_FR is NOT skipped: it is French spelling itself, the
+  // feature this plugin exists for. It does flag proper nouns — that is what
+  // the custom dictionary (config.customDictionary + the DB collection) is for.
+  // To restore the old behaviour, pass it via `skipRules`.
   'APOS_TYP',                     // Typography apostrophe (curly vs straight)
   'APOS_INCORRECT',               // Backtick/apostrophe in code contexts
   'POINT_VIRGULE',                // Semicolon spacing
@@ -30,11 +37,17 @@ const DEFAULT_SKIP_RULES = new Set([
   'FR_SPLIT_WORDS_HYPHEN',        // Suggests splitting hyphenated words (éco-responsable → éco responsable)
 ])
 
-/** Default categories to skip (English + French LanguageTool category IDs) */
-const DEFAULT_SKIP_CATEGORIES = new Set([
+/**
+ * Default categories to skip (English + French LanguageTool category IDs).
+ * Exported so consumers can derive a custom list from it.
+ */
+export const DEFAULT_SKIP_CATEGORIES: readonly string[] = Object.freeze([
   // English categories
   'TYPOGRAPHY',
-  'TYPOS',
+  // 'TYPOS' is NOT skipped: it is the LanguageTool category carrying every
+  // misspelling (MORFOLOGIK_RULE_EN_US and friends). Skipping it by default
+  // silently discarded the plugin's own core result. Pass it via
+  // `skipCategories` to restore the old behaviour.
   'STYLE',
   // French categories (LanguageTool uses different IDs for French)
   'CAT_TYPOGRAPHIE',              // French typography rules
@@ -76,13 +89,19 @@ export async function filterFalsePositives(
   config: SpellCheckPluginConfig,
   payload?: { find: Function },
 ): Promise<SpellCheckIssue[]> {
+  // `skipRules` / `skipCategories` are additive on top of the defaults, so no
+  // default entry could ever be removed without forking the package. The
+  // `overrideDefault*` options replace the default list wholesale (an empty
+  // array disables default filtering entirely); `skip*` still stacks on top.
+  const baseSkipRules = config.overrideDefaultSkipRules ?? DEFAULT_SKIP_RULES
   const skipRules = new Set([
-    ...DEFAULT_SKIP_RULES,
+    ...baseSkipRules,
     ...(config.skipRules || []),
   ])
 
+  const baseSkipCategories = config.overrideDefaultSkipCategories ?? DEFAULT_SKIP_CATEGORIES
   const skipCategories = new Set([
-    ...DEFAULT_SKIP_CATEGORIES,
+    ...baseSkipCategories,
     ...(config.skipCategories || []),
   ])
 

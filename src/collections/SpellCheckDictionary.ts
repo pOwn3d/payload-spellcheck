@@ -5,18 +5,28 @@
  */
 
 import type { CollectionConfig } from 'payload'
+import type { SpellCheckPluginConfig } from '../types.js'
+import { createAccessGuard } from '../endpoints/access.js'
 
-export function createSpellCheckDictionaryCollection(): CollectionConfig {
+export function createSpellCheckDictionaryCollection(
+  pluginConfig?: SpellCheckPluginConfig,
+): CollectionConfig {
+  // Same gate as the endpoints — see SpellCheckResults for the rationale.
+  // The dictionary silences spellcheck findings, so write access to it is a way
+  // to hide mistakes from everyone; it belongs to the same trust level.
+  const guard = createAccessGuard(pluginConfig)
+  const allow = ({ req }: { req: { user?: unknown } }): boolean => guard.isAllowed(req)
+
   return {
     slug: 'spellcheck-dictionary',
     admin: {
       hidden: true,
     },
     access: {
-      read: ({ req }) => !!req.user,
-      create: ({ req }) => !!req.user,
-      update: ({ req }) => !!req.user,
-      delete: ({ req }) => !!req.user,
+      read: allow,
+      create: allow,
+      update: allow,
+      delete: allow,
     },
     hooks: {
       beforeValidate: [

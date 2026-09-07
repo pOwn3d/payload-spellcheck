@@ -6,10 +6,51 @@
 import type { Payload } from 'payload'
 
 /**
- * Upsert a spellcheck result — find existing by docId + collection, update or create.
- * Returns the upserted document.
+ * Per-(collection, docId) write queue.
+ *
+ * The upsert below is a find-then-create, not an atomic operation, and there is
+ * no unique constraint on (docId, collection). Two concurrent checks of the same
+ * document — the afterChange hook racing a manual /validate, or a bulk scan
+ * racing a save — both saw "no row" and both created one, leaving duplicates the
+ * dashboard then shows twice. Serialising by key removes the race inside a
+ * single process (which is the deployment target: the rate limiter and the bulk
+ * job state are process-local too).
  */
-export async function upsertSpellcheckResult(
+const writeChains = new Map<string, Promise<unknown>>()
+
+function serializeByKey<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const previous = writeChains.get(key) ?? Promise.resolve()
+  // Run whether the previous write resolved or rejected — one failure must not
+  // block every later write for the same document.
+  const next = previous.then(task, task)
+  const tail = next.then(
+    () => {},
+    () => {},
+  )
+  writeChains.set(key, tail)
+  void tail.then(() => {
+    // Only the last writer in the chain clears the entry.
+    if (writeChains.get(key) === tail) writeChains.delete(key)
+  })
+  return next
+}
+
+/**
+ * Upsert a spellcheck result — find existing by docId + collection, update or create.
+ * Returns the upserted document. Writes to the same document are serialised.
+ */
+export function upsertSpellcheckResult(
+  payload: Payload,
+  docId: string,
+  docCollection: string,
+  resultData: Record<string, unknown>,
+): Promise<{ id: string | number; isNew: boolean }> {
+  return serializeByKey(`${docCollection}:${docId}`, () =>
+    upsertSpellcheckResultUnsafe(payload, docId, docCollection, resultData),
+  )
+}
+
+async function upsertSpellcheckResultUnsafe(
   payload: Payload,
   docId: string,
   docCollection: string,

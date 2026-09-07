@@ -1,61 +1,43 @@
-<p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=2563EB&center=true&vCenter=true&width=600&lines=@consilioweb/payload-spellcheck;Payload+CMS+Spellcheck+Plugin;LanguageTool+%2B+Claude+AI;Dashboard+%2B+Sidebar+%2B+Auto-check" alt="Typing SVG" />
-</p>
+# @consilioweb/payload-spellcheck
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/@consilioweb/payload-spellcheck"><img src="https://img.shields.io/npm/v/@consilioweb/payload-spellcheck?color=2563eb&label=npm" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/@consilioweb/payload-spellcheck"><img src="https://img.shields.io/npm/dm/@consilioweb/payload-spellcheck?color=22c55e" alt="npm downloads" /></a>
-  <img src="https://img.shields.io/badge/Payload_CMS-3.x-blue" alt="Payload CMS 3.x" />
-  <img src="https://img.shields.io/badge/LanguageTool-API-green" alt="LanguageTool" />
-  <img src="https://img.shields.io/badge/i18n-FR%20%2F%20EN-purple" alt="i18n" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow" alt="MIT License" /></a>
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6" alt="TypeScript" />
-</p>
+> Spelling, grammar and readability checking inside the Payload CMS 3 admin panel, powered by LanguageTool with an optional Claude semantic pass.
 
-<p align="center">
-  <a href="https://buymeacoffee.com/pown3d">
-    <img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy me a coffee" />
-  </a>
-</p>
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+[![npm](https://img.shields.io/npm/v/@consilioweb/payload-spellcheck.svg)](https://www.npmjs.com/package/@consilioweb/payload-spellcheck)
+[![license](https://img.shields.io/npm/l/@consilioweb/payload-spellcheck.svg)](LICENSE)
+[![Payload CMS](https://img.shields.io/badge/Payload%20CMS-3.x-blue.svg)](https://payloadcms.com)
 
 > [!IMPORTANT]
-> ## ⚠️ Next.js 16 + Turbopack — Known Issue
+> **Next.js 16 + Turbopack — known issue.** With **Next.js 16** and Turbopack (the default bundler),
+> `next build` may fail with `createContext is not a function`. This is a
+> [known Payload CMS issue](https://github.com/payloadcms/payload/issues/15429)
+> ([discussion](https://github.com/payloadcms/payload/discussions/14330)) — not specific to this plugin.
 >
-> If you're using **Next.js 16** with Turbopack (default bundler), you may encounter a `createContext is not a function` error during `next build`. This is a **known Payload CMS issue** ([#15429](https://github.com/payloadcms/payload/issues/15429), [#14330](https://github.com/payloadcms/payload/discussions/14330)) — not specific to this plugin.
->
-> **Workaround** — Add this to your admin page (`src/app/(payload)/admin/[[...segments]]/page.tsx`):
+> **Workaround** — in your admin page (`src/app/(payload)/admin/[[...segments]]/page.tsx`):
 > ```ts
 > export const dynamic = 'force-dynamic'
 > ```
 >
-> And ensure all `@consilioweb/*` packages are in `transpilePackages` in your `next.config.ts`:
+> And list every `@consilioweb/*` package in `transpilePackages` in `next.config.ts`:
 > ```ts
-> transpilePackages: ['@consilioweb/seo-analyzer', '@consilioweb/admin-nav', /* ...other @consilioweb packages */],
+> transpilePackages: ['@consilioweb/payload-spellcheck', /* ...other @consilioweb packages */],
 > ```
 >
-> ✅ **Next.js 15** works without any workaround.
+> Next.js 15 works without any workaround.
 
 ## About
 
-**@consilioweb/payload-spellcheck** is a Payload CMS 3 plugin that adds real-time spelling and grammar checking to your admin panel. Powered by [LanguageTool](https://languagetool.org/) with optional Claude AI semantic analysis.
+`@consilioweb/payload-spellcheck` checks the editorial content of your Payload documents where it is
+written, instead of after publication: a score and an issue list in the editor sidebar, a dashboard
+that scans every document of the configured collections, and a one-click fix that rewrites the
+Lexical JSON in place at the exact offset LanguageTool reported.
 
-| Feature | Description |
-|---------|-------------|
-| **Dashboard** | Full admin view at `/admin/spellcheck` with bulk scanning |
-| **Sidebar Field** | Real-time spellcheck score + issues in the editor |
-| **Auto-check** | Fire-and-forget hook checks content on every save |
-| **One-click Fix** | Apply corrections directly in Lexical JSON |
-| **LanguageTool** | Grammar, spelling, punctuation via free API |
-| **Claude AI** | Optional semantic analysis (coherence, tone, phrasing) |
-| **Custom Dictionary** | Whitelist tech terms, brand names, proper nouns |
-| **Dynamic Dictionary** | Add/remove words from admin UI, persists in DB |
-| **Offset-based Fix** | Precise corrections using LanguageTool offsets |
-| **Ignore Issues** | Dismiss false positives (persists across reloads) |
-| **i18n** | French and English UI translations |
+Spelling and grammar come from [LanguageTool](https://languagetool.org/) — the free public API needs
+no key, and a self-hosted instance is a one-line option. Claude can be enabled on top for what a
+grammar checker cannot see (tone, coherence, missing words); it never replaces LanguageTool. False
+positives are absorbed by a dictionary that lives half in the config and half in the database, so an
+editor can whitelist a brand name without a deploy.
 
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+Full release history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of Contents
 
@@ -63,85 +45,642 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
-- [Admin Views](#admin-views)
-- [Dynamic Dictionary](#dynamic-dictionary)
-- [API Endpoints](#api-endpoints)
 - [Engine](#engine)
+- [API Endpoints](#api-endpoints)
+- [Collections](#collections)
 - [Package Exports](#package-exports)
+- [Requirements](#requirements)
 - [Uninstall](#uninstall)
-- [Changelog](#changelog)
+- [Migration from `@consilioweb/spellcheck`](#migration-from-consiliowebspellcheck)
+- [Support](#support)
 - [License](#license)
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
 
 ## Features
 
-### Dashboard (`/admin/spellcheck`)
+- **Dashboard** at `/admin/spellcheck` — sortable results table (score, issues, word count,
+  readability, last check), expandable rows, per-issue fix / ignore / add-to-dictionary, bulk scan
+  with live progress, and a dictionary tab.
+- **Sidebar field** in the editor of every target collection — score badge, readability badge, issue
+  cards with one-click fix, manual correction, ignore, add to dictionary.
+- **Score column** in collection list views (labelled `Ortho`), removable with `addListColumn: false`.
+- **Auto-check on save** — non-blocking `afterChange` hook. It skips autosave ticks and the plugin's
+  own writes, so typing does not flood the LanguageTool API.
+- **LanguageTool engine** — spelling, grammar and punctuation through the free public API (no key
+  required), or any self-hosted instance via `languageToolUrl`.
+- **Claude semantic pass (opt-in)** — coherence, tone, phrasing and missing words, *in addition to*
+  LanguageTool. A Claude failure degrades the result; it never fails the request.
+- **Readability analysis** — Flesch-Kincaid (English) / Kandel-Moles (French), stored with every
+  result and displayed in the dashboard and the sidebar.
+- **Consistency check** — mixed variants of the same term in a document (`TypeScript` vs
+  `typescript`, `e-commerce` vs `ecommerce`). Computed, stored on the result and returned by
+  `/validate`; no dedicated UI yet.
+- **Two-source dictionary** — static `customDictionary` from the config, merged with a
+  `spellcheck-dictionary` collection editors manage from the dashboard (add, import, export, search,
+  bulk delete), cached in memory for 5 minutes.
+- **Offset-based fixes** — a correction applied at the reported offset (or at the offset a drift
+  search recovered) is re-read from the mutated document and refused rather than persisted when the
+  replacement did not land where it should. The last-resort substring fallback carries no offset, so
+  that verification does not cover it. A pending draft is corrected as a draft, leaving the published
+  version untouched.
+- **i18n, sidebar only** — the editor sidebar field and the issue cards it renders follow Payload's
+  active locale (French / English). The `/admin/spellcheck` dashboard is **not** translated: its
+  labels are French, and the issue cards inside it fall back to their French strings.
 
-- **Tabbed interface** — Results tab + Dictionary tab
-- **Selective scan** — Check specific pages or all documents at once
-- **Checkbox selection** — Pick individual documents to scan
-- **Collection filter** — Filter by collection (pages, posts, etc.)
-- **Sortable table** — Sort by score, issues, word count, last checked
-- **Expandable rows** — Click a document to see all issues inline
-- **Before/After diff** — Visual comparison of original vs corrected text
-- **Multiple suggestions** — Dropdown to choose between alternative corrections
-- **One-click fix** — Apply corrections directly (issue removed from UI + DB)
-- **Ignore button** — Dismiss false positives (persists in DB across reloads)
-- **Add to dictionary** — Whitelist a word directly from an issue card
-- **Summary cards** — Total documents, average score, issues count
+## Installation
 
-### Sidebar Field
+```bash
+# npm
+npm install @consilioweb/payload-spellcheck
 
-- **Score badge** — Color-coded score (green/yellow/red) in the editor sidebar
-- **Issue list** — All issues with context, suggestions, and fix buttons
-- **Manual check** — "Vérifier" button for on-demand analysis
-- **Auto-check** — Results loaded automatically from last check
+# pnpm
+pnpm add @consilioweb/payload-spellcheck
 
-### Auto-check on Save
+# yarn
+yarn add @consilioweb/payload-spellcheck
+```
 
-- **Non-blocking** — Fire-and-forget async (IIFE pattern, does not slow down saves)
-- **Upsert results** — Stores/updates results in `spellcheck-results` collection
-- **Configurable** — Enable/disable via `checkOnSave` option
+| Peer dependency | Version | Required |
+|-----------------|---------|----------|
+| `payload` | `^3.0.0` | yes |
+| `@payloadcms/next` | `^3.0.0` | optional — needed for the dashboard view |
+| `@payloadcms/ui` | `^3.0.0` | optional — needed for the admin components |
+| `react` | `^18.0.0 \|\| ^19.0.0` | optional — needed for the admin components |
 
-### LanguageTool Engine
+An installer binary is shipped with the package. It adds the plugin call to your plugins file
+(`src/plugins/index.ts`, `src/plugins.ts`, or any file exporting `plugins` as a `Plugin[]`) and
+regenerates the import map:
 
-- **Free API** — No API key required (public LanguageTool API)
-- **Rate-limited** — 3-second delay between requests for bulk scans
-- **18K char limit** — Automatic text truncation for API compliance
-- **Smart filtering** — Skip premium rules, typography, style-only issues
-- **Custom dictionary** — Whitelist words that shouldn't be flagged
+```bash
+npx spellcheck-install --collections pages,posts --language fr
+```
 
-### Claude AI Fallback (Optional)
+## Quick Start
 
-- **Semantic analysis** — Checks coherence, tone, phrasing, missing words
-- **Complementary** — Does NOT duplicate LanguageTool (no spelling/grammar)
-- **Cost-efficient** — Uses Claude Haiku for fast, cheap analysis
-- **Opt-in** — Disabled by default, enable via `enableAiFallback: true`
+```ts
+// src/payload.config.ts
+import { buildConfig } from 'payload'
+import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
 
-### Dynamic Dictionary
+export default buildConfig({
+  // ...
+  plugins: [
+    spellcheckPlugin({
+      collections: ['pages', 'posts'],
+      language: 'fr',
+    }),
+  ],
+})
+```
 
-- **Admin UI** — Manage dictionary from the "Dictionnaire" tab in the dashboard
-- **Add words** — Single word or comma-separated bulk input
-- **Import** — Paste a list of words (one per line or comma-separated)
-- **Export** — Download all dictionary words as a `.txt` file
-- **Search & filter** — Find words in the dictionary
-- **Bulk delete** — Select and remove multiple words at once
-- **Merged sources** — Config `customDictionary` (defaults) + DB dictionary (dynamic)
-- **5-min cache** — Dictionary loaded from DB with in-memory TTL cache
-- **Auto-schema** — Plugin auto-creates missing DB columns on init (SQLite/Postgres)
+Then regenerate the import map:
 
-### Lexical JSON Support
+```bash
+npx payload generate:importmap
+```
 
-- **Recursive extraction** — Traverses Lexical AST to extract plain text
-- **Code block skip** — Ignores code blocks (not natural language)
-- **Offset-based fixes** — Precise corrections using LanguageTool offsets (v0.8.0+)
-- **Legacy fallback** — Substring search for backwards compatibility
-- **Multi-field** — Extracts from hero, content, layout blocks, columns
+> [!WARNING]
+> **Prerequisite — the admin role.** By default every endpoint, the dashboard view **and the two
+> plugin collections** are reserved for users carrying `role: 'admin'`, or a `roles` array containing
+> `'admin'`. On a Payload install whose `Users` collection has no such field, **nothing is readable**:
+> the endpoints answer `403`, the dashboard redirects to `/admin`, and the sidebar score stays empty.
+> Either add the field, or pass your own check:
+>
+> ```ts
+> spellcheckPlugin({
+>   // `req` is passed directly — NOT destructured as `{ req }`
+>   access: (req) => Boolean(req.user),
+> })
+> ```
 
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
+The plugin then:
 
-## ⚠️ Migration from `@consilioweb/spellcheck`
+- registers nine REST endpoints under `/api/spellcheck` (see [API Endpoints](#api-endpoints));
+- creates the `spellcheck-results` and `spellcheck-dictionary` collections (hidden from the admin nav);
+- adds a sidebar field and a score column to every collection listed in `collections`;
+- registers the dashboard view at `/admin/spellcheck` (Results + Dictionary tabs);
+- adds an `afterChange` hook that re-checks a document on save;
+- on init, adds the `spellcheck_dictionary_id` column that Payload's `push: true` omits from
+  `payload_locked_documents_rels` (SQLite; on other adapters it logs the `ALTER TABLE` to run).
+
+## Configuration
+
+```ts
+spellcheckPlugin({
+  // Target collections (default: ['pages', 'posts'])
+  collections: ['pages', 'posts'],
+
+  // Rich text field name (default: 'content')
+  contentField: 'content',
+
+  // LanguageTool language code (default: 'fr')
+  language: 'fr',
+
+  // ── Filtering ──────────────────────────────────────
+
+  // Rule IDs to skip — ADDED to the built-in defaults, never replacing them.
+  // An ID already present in DEFAULT_SKIP_RULES (or whose whole category is
+  // skipped) changes nothing: check the exported lists first, and take IDs
+  // from the `ruleId` field of a /validate response.
+  // Never list a spelling rule here (MORFOLOGIK_*): those carry the
+  // misspellings the plugin exists to report. Use customDictionary for
+  // legitimate proper nouns instead.
+  // Below: LanguageTool's language-independent word-repetition rule. Its
+  // French variant, FRENCH_WORD_REPEAT_RULE, is already a default.
+  skipRules: ['WORD_REPEAT_RULE'],
+
+  // Categories to skip — ADDED to the built-in defaults, which already
+  // contain 'TYPOGRAPHY' and 'STYLE'.
+  // 'TYPOS' is the category of every misspelling — do not add it here.
+  // Below: LanguageTool's English redundancy category, as an example.
+  skipCategories: ['REDUNDANCY'],
+
+  // Words never flagged as errors, merged with the DB dictionary
+  customDictionary: ['Next.js', 'Payload', 'TypeScript', 'ConsilioWEB'],
+
+  // ── Claude semantic pass (optional) ────────────────
+
+  enableAiFallback: false,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+
+  // ── Access control ─────────────────────────────────
+
+  // The whole request is the argument — do NOT destructure it as `{ req }`.
+  // Gates the endpoints, the dashboard view AND the two plugin collections.
+  access: (req) => req.user?.role === 'admin',
+})
+```
+
+### Options reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `collections` | `string[]` | `['pages', 'posts']` | Collections to check. Also the allowlist every endpoint validates its `collection` against |
+| `contentField` | `string` | `'content'` | Rich text field to extract |
+| `language` | `string` | `'fr'` | LanguageTool language code |
+| `checkOnSave` | `boolean` | `true` | Add the `afterChange` auto-check hook |
+| `addSidebarField` | `boolean` | `true` | Add the sidebar field to the editor |
+| `addDashboardView` | `boolean` | `true` | Register the `/admin/spellcheck` view |
+| `addListColumn` | `boolean` | `true` | Add the `Ortho` score column to list views |
+| `endpointBasePath` | `string` | `'/spellcheck'` | Base path of the REST endpoints. See the caveat below |
+| `enableAiFallback` | `boolean` | `false` | Enable the Claude semantic pass |
+| `anthropicApiKey` | `string` | — | Anthropic API key, required when `enableAiFallback` is on |
+| `skipRules` | `string[]` | `[]` | Rule IDs to skip — **added** to the default list |
+| `skipCategories` | `string[]` | `[]` | Categories to skip — **added** to the default list |
+| `overrideDefaultSkipRules` | `string[]` | — | Replaces the default rule list instead of stacking on it. `[]` disables default rule filtering |
+| `overrideDefaultSkipCategories` | `string[]` | — | Replaces the default category list. `[]` disables default category filtering |
+| `customDictionary` | `string[]` | `[]` | Words never flagged, merged with the DB dictionary |
+| `languageToolUrl` | `string` | `'https://api.languagetool.org/v2/check'` | LanguageTool endpoint — set it for a self-hosted instance |
+| `warningThreshold` | `number` | `80` | **Accepted but currently unread.** The score colours in the UI are hard-coded (green ≥ 95, amber ≥ 80, red below) |
+| `autoFixSchema` | `boolean` | `true` | Add the missing `payload_locked_documents_rels` column on init |
+| `access` | `(req) => boolean` | admin only | Gates the endpoints, the dashboard view and both plugin collections. The whole request is the argument |
+| `packageName` | `string` | `'@consilioweb/payload-spellcheck'` | Package name used to build admin component paths — for monorepos and aliased installs |
+| `trustProxy` | `boolean` | `true` | Trust `x-forwarded-for` / `x-real-ip` in the rate limiter. `false` puts every caller in one shared bucket |
+| `rateLimits` | `object` | see below | Per-endpoint rate limits |
+| `timeouts` | `object` | see below | Timeouts and length limits |
+
+> [!NOTE]
+> `endpointBasePath` moves the REST endpoints only. The bundled dashboard and sidebar call
+> `/api/spellcheck/...` literally, so changing the base path breaks the admin UI while leaving the
+> API usable.
+
+> [!NOTE]
+> `trustProxy: false` is not the safe setting. The rate limiter runs *before* authentication, so a
+> single global bucket can be exhausted by an anonymous caller for every admin. Keep `true` unless
+> you know what you are trading away.
+
+#### `rateLimits`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `rateLimits.validate` | `number` | `30` | Max requests per window for `/validate` |
+| `rateLimits.fix` | `number` | `20` | Max requests per window for `/fix` |
+| `rateLimits.fixAll` | `number` | `5` | Max requests per window for `/fix-all` |
+| `rateLimits.bulk` | `number` | `3` | Max requests per window for `/bulk` |
+| `rateLimits.status` | `number` | `60` | Max requests per window for `/status` (the dashboard polls it every 2 s) |
+| `rateLimits.dictionary` | `number` | `60` | Max requests per window for `/dictionary` |
+| `rateLimits.windowMs` | `number` | `60000` | Rate limit window, in milliseconds |
+
+#### `timeouts`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeouts.languageTool` | `number` | `30000` | LanguageTool request timeout (ms) |
+| `timeouts.claude` | `number` | `60000` | Claude request timeout (ms) |
+| `timeouts.maxTextLengthLanguageTool` | `number` | `18000` | Max characters sent to LanguageTool (text is truncated) |
+| `timeouts.maxTextLengthClaude` | `number` | `8000` | Max characters sent to Claude (text is truncated) |
+| `timeouts.bulkRateLimitDelay` | `number` | `3000` | Delay between LanguageTool calls during a bulk scan (ms) |
+| `timeouts.bulkStaleTimeout` | `number` | `600000` | A bulk job with no progress for this long is declared dead (ms) |
+
+### Default skip lists
+
+`DEFAULT_SKIP_RULES` and `DEFAULT_SKIP_CATEGORIES` are exported from the package root, so a custom
+list can be derived from them rather than retyped:
+
+```ts
+import { spellcheckPlugin, DEFAULT_SKIP_RULES } from '@consilioweb/payload-spellcheck'
+
+spellcheckPlugin({
+  overrideDefaultSkipRules: DEFAULT_SKIP_RULES.filter((r) => r !== 'DASH_RULE'),
+})
+```
+
+The defaults cover whitespace, typography, dash and repetition noise typical of CMS extraction.
+Since 0.15.0 they deliberately **do not** contain the `TYPOS` category nor `MORFOLOGIK_RULE_FR_FR`:
+those carry the misspellings the plugin exists to report. To restore the pre-0.15 silence:
+`skipCategories: ['TYPOS'], skipRules: ['MORFOLOGIK_RULE_FR_FR']`.
+
+## Engine
+
+### Text extraction
+
+Text is extracted by walking the document in this order, each part contributing one segment:
+
+1. `title` — plain string
+2. `hero.richText` — Lexical JSON
+3. the configured `contentField` — Lexical JSON
+4. `layout[]` — each block's rich text, plain text fields and nested columns
+
+Code blocks are skipped, as are values that look like IDs, URLs or dates. Each segment records how
+much leading whitespace the trim removed, so a correction lands on the character the offset really
+points at.
+
+### LanguageTool
+
+- Default endpoint: `POST https://api.languagetool.org/v2/check` — free, no authentication
+- Text truncated to 18 000 characters (`timeouts.maxTextLengthLanguageTool`)
+- 30 s request timeout (`timeouts.languageTool`)
+- 3 s between calls during a bulk scan (`timeouts.bulkRateLimitDelay`)
+
+A failed call is never reported as a clean document: `/validate` answers `502` with
+`{ "checkFailed": true }`, the auto-check hook logs a warning and leaves the stored result alone, and
+a bulk scan counts the document in its `failed` counter.
+
+### Filtering
+
+Every LanguageTool match goes through these layers, in order:
+
+1. premium-only rules
+2. `skipRules` (defaults + your additions, or your `overrideDefaultSkipRules`)
+3. `skipCategories` (same logic)
+4. exact dictionary match on the flagged word
+5. dictionary entry contained in the flagged word — entries of 5+ characters only, on a word boundary
+6. multi-word dictionary entry present in the surrounding context
+7. single-character matches, except in the `GRAMMAR` category
+8. non-language patterns: URLs, e-mails, CamelCase, all-caps acronyms, numbers and units, hashtags,
+   currency, phone numbers, domain names, inline code, `snake_case`, CSS custom properties
+9. code-ish context: an open backtick span, or a CLI command (`npm`, `git`, `docker`, …)
+10. suggestions identical to the original, and contexts shorter than 5 characters
+11. repetition rules whose word is in the dictionary or whose suggestion is empty
+
+Then the issues the user marked as ignored (`ignoredIssues` on the stored result) are removed.
+
+### Scoring
+
+```text
+score = clamp(round(100 - (issues / words) * 1000), 0, 100)
+```
+
+A document with no words or no issues scores 100. The same formula runs client-side after a fix, so
+the badge and the stored score never disagree.
+
+- **≥ 95** — excellent (green)
+- **≥ 80** — good (amber)
+- **< 80** — needs work (red)
+
+### Claude (optional)
+
+With `enableAiFallback: true` and an `anthropicApiKey`, the extracted text (truncated to 8 000
+characters) is also sent to `claude-haiku-4-5-20251001` for semantic issues only: inconsistent tone,
+contradictions, awkward phrasing, missing words. Results carry `source: 'claude'`, a category among
+`COHERENCE`, `TONE`, `PHRASING`, `MISSING_WORD`, and a `ruleId` of `CLAUDE_<category>`.
+
+Claude enriches the LanguageTool result — it never replaces it. A Claude failure is logged and
+skipped; only a LanguageTool failure fails the request.
+
+## API Endpoints
+
+Paths below assume the default `endpointBasePath` (`/spellcheck`) and Payload's default API route
+(`/api`). Every endpoint requires an authenticated user **and** passes the `access` check
+(admin-only by default). A rejection answers `403`; when the default check is in use, the body also
+carries a `hint` naming the expected role. Exceeding a rate limit answers `429` with `Retry-After`.
+
+| Method | Path | Rate limit | What it does |
+|--------|------|-----------|--------------|
+| `POST` | `/api/spellcheck/validate` | 30/min | Check one document (`{ id, collection }`) or raw text (`{ text, language? }`, 50 000 chars max) |
+| `POST` | `/api/spellcheck/fix` | 20/min | Apply one correction in the Lexical JSON, then re-align the offsets of the remaining stored issues |
+| `POST` | `/api/spellcheck/fix-all` | 5/min | Apply every stored fixable issue of a document, last offset first, in strict mode |
+| `POST` | `/api/spellcheck/bulk` | 3/min | Start a background scan; returns immediately |
+| `GET` | `/api/spellcheck/status` | 60/min | Current scan progress |
+| `GET` | `/api/spellcheck/dictionary` | 60/min | List dictionary words, sorted alphabetically |
+| `POST` | `/api/spellcheck/dictionary` | 60/min | Add one or several words |
+| `DELETE` | `/api/spellcheck/dictionary` | 60/min | Remove words by id or by word |
+| `GET` | `/api/spellcheck/collections` | — | The collections the plugin is configured for |
+
+### POST `/api/spellcheck/validate`
+
+```json
+// Check a document by ID
+{ "id": "123", "collection": "pages" }
+
+// Check raw text
+{ "text": "Ceci est une test.", "language": "fr" }
+```
+
+**Response** — also stored in `spellcheck-results` when `id` and `collection` are given:
+
+```json
+{
+  "docId": "123",
+  "collection": "pages",
+  "score": 85,
+  "issueCount": 1,
+  "wordCount": 450,
+  "issues": [
+    {
+      "ruleId": "GRAMMAR",
+      "category": "GRAMMAR",
+      "message": "Le déterminant « une » ne correspond pas…",
+      "context": "Ceci est une test.",
+      "contextOffset": 9,
+      "offset": 9,
+      "length": 3,
+      "original": "une",
+      "replacements": ["un"],
+      "source": "languagetool"
+    }
+  ],
+  "readability": { "score": 62, "grade": "Facile", "avgSentenceLength": 14.2, "avgSyllablesPerWord": 1.7, "sentenceCount": 32, "wordCount": 450 },
+  "consistency": [{ "term": "ecommerce", "variants": [{ "text": "e-commerce", "count": 3 }, { "text": "ecommerce", "count": 1 }] }],
+  "lastChecked": "2026-09-07T20:30:00.000Z"
+}
+```
+
+`403` when the collection is not in the plugin's `collections`, `404` when the document does not
+exist, `400` when the text exceeds 50 000 characters, `502` with `{ "checkFailed": true }` when
+LanguageTool is unreachable.
+
+### POST `/api/spellcheck/fix`
+
+```json
+{
+  "id": "123",
+  "collection": "pages",
+  "original": "une test",
+  "replacement": "un test",
+  "offset": 42,
+  "length": 8,
+  "field": "content"
+}
+```
+
+`offset` and `length` target the correction precisely. The endpoint falls back to rewriting the
+first matching substring of the document when they are missing — and also when they are supplied but
+neither the exact offset nor the drift search finds `original` there. `field` restricts the search to
+one top-level field.
+
+**Response** (`FixResult`):
+
+```json
+{
+  "success": true,
+  "fixesApplied": 1,
+  "original": "une test",
+  "replacement": "un test",
+  "method": "offset",
+  "target": "draft",
+  "appliedOffset": 42,
+  "appliedLength": 8
+}
+```
+
+`target` says where the correction went: `draft` when the document had a pending draft — the
+published version is left untouched — `published` otherwise. `method` says how the text was located:
+`offset` (exact hit), `search` (offset drift recovered) or `legacy` (substring fallback).
+
+The `offset` and `search` paths are re-read from the mutated document before saving: when the
+replacement did not land at the applied offset, nothing is persisted and the response comes back with
+`success: false` and an `error`. The `legacy` path produces no coordinates, so that verification does
+not apply to it — it is saved on the strength of the substring match alone, and answers
+`success: true` with `method: 'legacy'` and no `appliedOffset`.
+
+On success the endpoint also rewrites the stored `spellcheck-results` row: the corrected issue is
+dropped and the offsets of the remaining ones are shifted by the length difference, with no
+LanguageTool call. That re-alignment needs `appliedOffset`, which the legacy substring fallback does
+not produce.
+
+### POST `/api/spellcheck/fix-all`
+
+```json
+{ "id": "123", "collection": "pages" }
+```
+
+Applies every stored issue that has at least one suggestion, walking the document from the **last**
+offset to the first so a length-changing replacement never invalidates the offsets still to come.
+Strict mode: no fuzzy match, no substring fallback — an issue whose offset no longer matches its
+`original` is counted as `failed` rather than applied somewhere else. One re-check runs after the
+batch, but only when at least one fix was applied: a batch where everything failed answers
+`rechecked: false` and leaves the stored result as it was.
+
+**Response** (`FixAllResult`): `{ "applied": 4, "failed": 1, "details": [...], "rechecked": true }`.
+`404` when the document has no stored result yet.
+
+### POST `/api/spellcheck/bulk`
+
+```json
+// Scan every configured collection
+{}
+
+// Scan one collection
+{ "collection": "posts" }
+
+// Scan specific documents
+{ "ids": [{ "id": "123", "collection": "pages" }] }
+
+// Reset a stuck scan and start over
+{ "force": true }
+```
+
+Answers `{ "message": "Scan started", "status": "running" }` and runs in the background. `409` when a
+scan is already running and `force` is not set — the body is the running job itself, in the `/status`
+shape, plus `"error": "Scan already in progress"`, so the caller can display the progress of the scan
+that blocks it. `403` when `collection`, or any `ids[]` entry, names a collection outside the
+plugin's `collections` — a malformed entry (missing `collection`, falsy entry) rejects the whole
+request. Collections without `versions.drafts` are scanned in full; the
+others are limited to published documents.
+
+### GET `/api/spellcheck/status`
+
+`{ "status": "idle" }` when no scan ever ran, otherwise the live job:
+
+```json
+{
+  "status": "running",
+  "current": 12,
+  "total": 40,
+  "currentDoc": "Accueil",
+  "totalIssues": 87,
+  "totalDocuments": 12,
+  "failed": 1,
+  "averageScore": 0,
+  "startedAt": "2026-09-07T20:30:00.000Z",
+  "completedAt": null,
+  "error": null,
+  "lastActivity": 1757277000000
+}
+```
+
+`failed` counts documents whose check could not run. `lastActivity` is the epoch timestamp (ms) of
+the last progress update: a job with no progress for `bulkStaleTimeout` flips to `status: 'error'`
+with `error: 'Scan timed out (no progress)'`, and the flip happens on the next `/status` or `/bulk`
+call, not on a timer.
+
+### Dictionary
+
+```json
+// GET  → { "words": [{ "id": "1", "word": "typescript", "addedBy": {...}, "createdAt": "…" }], "count": 1 }
+
+// POST → { "added": ["typescript"], "skipped": [], "count": 1 }
+{ "word": "TypeScript" }
+{ "words": ["TypeScript", "Next.js", "Payload"] }
+
+// DELETE → { "deleted": 2 }
+{ "id": "abc123" }
+{ "ids": ["abc123", "def456"] }
+{ "word": "typescript" }
+```
+
+`DELETE` also reads `id` from the query string — `DELETE /api/spellcheck/dictionary?id=abc123`, for
+clients that send no body. The forms accumulate: body `id`, query `id`, `ids[]` and the id resolved
+from `word` are all deleted, and `deleted` counts the ones that existed. Supplying none of them
+answers `400`.
+
+Words are trimmed, lower-cased and capped at 100 characters. Adding an existing word is a skip, not
+an error. Every write invalidates the 5-minute in-memory cache.
+
+### GET `/api/spellcheck/collections`
+
+`{ "collections": ["pages", "posts"] }` — used by the dashboard to build its collection filter.
+
+## Collections
+
+Both collections are created by the plugin and hidden from the admin nav. Since 0.15.0 they share
+the endpoints' `access` check for read, create, update and delete: admin-only by default. The plugin
+writes to them internally with `overrideAccess: true`, so tightening the gate does not affect scans
+or fixes.
+
+| Slug | Role | Read / write |
+|------|------|--------------|
+| `spellcheck-results` | One row per checked document: score, issues, ignored issues, readability, consistency | the plugin's `access` check |
+| `spellcheck-dictionary` | One document per whitelisted word | the plugin's `access` check |
+
+**`spellcheck-results` fields** — `docId`, `collection`, `title`, `slug`, `score`, `issueCount`,
+`wordCount`, `issues` (JSON), `ignoredIssues` (JSON), `readability` (JSON), `consistency` (JSON),
+`lastChecked`. Payload timestamps are disabled on this collection.
+
+**`spellcheck-dictionary` fields** — `word` (text, unique, indexed, max 100, lower-cased on save),
+`addedBy` (relationship to `users`).
+
+## Package Exports
+
+| Subpath | Exposes | Environment |
+|---------|---------|-------------|
+| `@consilioweb/payload-spellcheck` | Plugin, engine functions, types | server |
+| `@consilioweb/payload-spellcheck/client` | Admin components | client (`'use client'`) |
+| `@consilioweb/payload-spellcheck/views` | Dashboard view | server (RSC) |
+
+### Root entry
+
+```ts
+import {
+  // Plugin
+  spellcheckPlugin,
+  // Extraction
+  extractTextFromLexical, extractAllTextFromDoc, extractAllTextFromDocWithSources, countWords,
+  // Engines — prefer the run* forms, whose outcome distinguishes failure from a clean text
+  runLanguageToolCheck, runClaudeCheck,
+  checkWithLanguageTool, checkWithClaude, // @deprecated — return [] on failure
+  // Filtering and scoring
+  filterFalsePositives, calculateScore, DEFAULT_SKIP_RULES, DEFAULT_SKIP_CATEGORIES,
+  // Analysis
+  analyzeReadability, checkConsistency,
+  // Dictionary cache
+  loadDictionaryWords, invalidateDictionaryCache,
+  // Fix-all handler, for a custom endpoint registration
+  createFixAllHandler,
+  // i18n
+  getTranslations, getScoreLabel,
+} from '@consilioweb/payload-spellcheck'
+
+import type {
+  SpellCheckPluginConfig, SpellCheckIssue, SpellCheckResult,
+  TextSegment, ExtractedDoc,
+  LanguageToolOutcome, ClaudeOutcome,
+  ReadabilityResult, ConsistencyIssue,
+  FixAllResult,
+  SpellcheckLocale, SpellcheckTranslations,
+} from '@consilioweb/payload-spellcheck'
+```
+
+### Client entry
+
+```ts
+import {
+  SpellCheckField,
+  SpellCheckDashboard,
+  IssueCard,
+  SpellCheckScoreCell,
+} from '@consilioweb/payload-spellcheck/client'
+```
+
+### Views entry
+
+```ts
+import { SpellCheckView } from '@consilioweb/payload-spellcheck/views'
+```
+
+## Requirements
+
+- **Node.js** — `>= 18`
+- **Payload CMS** — `^3.0.0` (required peer dependency)
+- **`@payloadcms/next`**, **`@payloadcms/ui`** — `^3.0.0`, optional peers, needed by the admin UI
+- **React** — `^18.0.0 || ^19.0.0`, optional peer, needed by the admin UI
+- **Next.js** — 15, or 16 with the Turbopack workaround at the top of this file
+- **Database** — any Payload adapter. `autoFixSchema` only patches SQLite automatically; on other
+  adapters it logs the `ALTER TABLE` statement to run.
+
+## Uninstall
+
+### Automatic
+
+```bash
+npx spellcheck-uninstall
+```
+
+It removes the plugin's imports and calls from your source files, drops the plugin tables and
+indexes, removes the dependency, and regenerates the import map.
+
+- `--keep-data` — keep the database tables.
+- `--force-db` — drop the tables even when the plugin is not detected in the project. The database
+  step is the only irreversible one, so by default it runs only when the plugin is actually found
+  (a cleaned source file, or the dependency declared in `package.json`).
+
+### Manual
+
+1. Remove the plugin from your config.
+2. Run `npx payload generate:importmap`.
+3. Optionally drop the tables:
+
+```sql
+-- SQLite
+DROP INDEX IF EXISTS `spellcheck_results_doc_id_idx`;
+DROP INDEX IF EXISTS `spellcheck_results_collection_idx`;
+DROP INDEX IF EXISTS `spellcheck_results_last_checked_idx`;
+DROP INDEX IF EXISTS `spellcheck_dictionary_word_idx`;
+DROP TABLE IF EXISTS `spellcheck_results`;
+DROP TABLE IF EXISTS `spellcheck_dictionary`;
+```
+
+## Migration from `@consilioweb/spellcheck`
 
 This package has been renamed from `@consilioweb/spellcheck` to `@consilioweb/payload-spellcheck`.
 
@@ -167,528 +706,15 @@ Then update your imports:
 + import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
 ```
 
----
+## Support
 
-## Installation
-
-```bash
-# npm
-npm install @consilioweb/payload-spellcheck
-
-# pnpm
-pnpm add @consilioweb/payload-spellcheck
-
-# yarn
-yarn add @consilioweb/payload-spellcheck
-```
-
-| Peer Dependency | Version |
-|----------------|---------|
-| `payload` | `^3.0.0` |
-| `@payloadcms/next` | `^3.0.0` |
-| `@payloadcms/ui` | `^3.0.0` |
-| `react` | `^18.0.0 \|\| ^19.0.0` |
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Quick Start
-
-Add the plugin to your Payload config:
-
-```typescript
-// src/plugins/index.ts (or payload.config.ts)
-import { spellcheckPlugin } from '@consilioweb/payload-spellcheck'
-
-export default buildConfig({
-  plugins: [
-    spellcheckPlugin({
-      collections: ['pages', 'posts'],
-      language: 'fr',
-    }),
-  ],
-})
-```
-
-Then regenerate the import map:
-
-```bash
-npx payload generate:importmap
-```
-
-That's it! The plugin automatically:
-- Creates `spellcheck-results` and `spellcheck-dictionary` collections (hidden from admin nav)
-- Registers API endpoints (`validate`, `fix`, `bulk`, `status`, `dictionary`)
-- Adds a sidebar field to your target collections
-- Creates a dashboard view at `/admin/spellcheck` (Results + Dictionary tabs)
-- Adds an `afterChange` hook for auto-checking on save
-- Auto-fixes missing DB columns on init (SQLite/Postgres `push:true` compatibility)
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Configuration
-
-```typescript
-spellcheckPlugin({
-  // Target collections (default: ['pages', 'posts'])
-  collections: ['pages', 'posts'],
-
-  // Rich text field name (default: 'content')
-  contentField: 'content',
-
-  // LanguageTool language (default: 'fr')
-  language: 'fr',
-
-  // Auto-check on save (default: true)
-  checkOnSave: true,
-
-  // Sidebar field in editor (default: true)
-  addSidebarField: true,
-
-  // Dashboard view at /admin/spellcheck (default: true)
-  addDashboardView: true,
-
-  // Base path for API endpoints (default: '/spellcheck')
-  endpointBasePath: '/spellcheck',
-
-  // ── Filtering ──────────────────────────────────────
-
-  // LanguageTool rule IDs to skip
-  skipRules: ['FR_SPELLING_RULE', 'WHITESPACE_RULE'],
-
-  // LanguageTool categories to skip
-  skipCategories: ['TYPOGRAPHY', 'STYLE'],
-
-  // Words to never flag as errors
-  customDictionary: [
-    'Next.js', 'Payload', 'TypeScript', 'SEO',
-    'Corrèze', 'Limoges', 'ConsilioWEB',
-  ],
-
-  // Minimum score threshold for warnings (default: 80)
-  warningThreshold: 80,
-
-  // ── Claude AI Fallback (optional) ──────────────────
-
-  // Enable semantic analysis via Claude (default: false)
-  enableAiFallback: false,
-
-  // Anthropic API key (required if enableAiFallback is true)
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-
-  // ── RBAC (v0.13.0) ────────────────────────────────────
-
-
-  // Custom access control function (default: admin-only)
-  access: ({ req }) => req.user?.role === 'admin',
-
-  // ── Advanced (v0.13.0) ─────────────────────────────────
-
-  // Custom package name for component paths (monorepo support)
-  packageName: '@my-scope/spellcheck',
-
-  // Trust x-forwarded-for header for IP-based rate limiting
-  trustProxy: false,
-})
-```
-
-### Options Reference
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `collections` | `string[]` | `['pages', 'posts']` | Collections à vérifier |
-| `contentField` | `string` | `'content'` | Nom du champ rich text à extraire |
-| `language` | `string` | `'fr'` | Code langue pour LanguageTool |
-| `checkOnSave` | `boolean` | `true` | Vérification automatique à la sauvegarde |
-| `addSidebarField` | `boolean` | `true` | Ajouter le champ sidebar dans l'éditeur |
-| `addDashboardView` | `boolean` | `true` | Ajouter la vue `/admin/spellcheck` |
-| `addListColumn` | `boolean` | `true` | Ajouter la colonne score dans les listes de collection |
-| `endpointBasePath` | `string` | `'/spellcheck'` | Chemin de base pour les endpoints API |
-| `enableAiFallback` | `boolean` | `false` | Activer l'analyse sémantique Claude AI |
-| `anthropicApiKey` | `string` | — | Clé API Anthropic pour Claude |
-| `skipRules` | `string[]` | `[]` | IDs de règles LanguageTool à ignorer |
-| `skipCategories` | `string[]` | `[]` | Catégories LanguageTool à ignorer |
-| `customDictionary` | `string[]` | `[]` | Mots à ne jamais signaler comme erreurs |
-| `languageToolUrl` | `string` | `'https://api.languagetool.org/v2/check'` | URL de l'API LanguageTool (pour instances auto-hébergées) |
-| `warningThreshold` | `number` | `80` | Score en dessous duquel un avertissement est affiché |
-| `autoFixSchema` | `boolean` | `true` | Auto-fix missing DB columns on startup |
-| `access` | `function` | Admin-only | Custom access control function for endpoints (v0.13.0) |
-| `packageName` | `string` | `'@consilioweb/payload-spellcheck'` | Custom package name for component paths — useful in monorepos (v0.13.0) |
-| `trustProxy` | `boolean` | `false` | Trust x-forwarded-for header for IP-based rate limiting (v0.13.0) |
-| `rateLimits` | `object` | -- | Rate limiting overrides (see below) |
-| `timeouts` | `object` | -- | Timeout and limit overrides (see below) |
-
-#### `rateLimits`
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `rateLimits.validate` | `number` | `30` | Max requêtes par fenêtre pour `/validate` |
-| `rateLimits.fix` | `number` | `20` | Max requêtes par fenêtre pour `/fix` |
-| `rateLimits.fixAll` | `number` | `5` | Max requêtes par fenêtre pour `/fix-all` |
-| `rateLimits.bulk` | `number` | `3` | Max requêtes par fenêtre pour `/bulk` |
-| `rateLimits.dictionary` | `number` | `60` | Max requêtes par fenêtre pour `/dictionary` |
-| `rateLimits.windowMs` | `number` | `60000` | Fenêtre de rate limiting en millisecondes |
-
-#### `timeouts`
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `timeouts.languageTool` | `number` | `30000` | Timeout de l'API LanguageTool en ms |
-| `timeouts.claude` | `number` | `60000` | Timeout de l'API Claude en ms |
-| `timeouts.maxTextLengthLanguageTool` | `number` | `18000` | Longueur max du texte envoyé à LanguageTool (caractères) |
-| `timeouts.maxTextLengthClaude` | `number` | `8000` | Longueur max du texte envoyé à Claude (caractères) |
-| `timeouts.bulkRateLimitDelay` | `number` | `3000` | Délai entre les appels API LanguageTool lors d'un scan bulk (ms) |
-| `timeouts.bulkStaleTimeout` | `number` | `600000` | Timeout pour les jobs bulk stale (ms) |
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Admin Views
-
-### Dashboard (`/admin/spellcheck`)
-
-The dashboard provides a complete overview of your content's spelling quality:
-
-- **Summary cards** — Document count, average score, total issues, error-free count
-- **Sortable table** — Click column headers to sort by score, issues, words, date
-- **Expandable rows** — Click any row to see detailed issues with context and suggestions
-- **Bulk scan** — "Scanner tout" analyzes all published documents sequentially
-- **One-click fix** — Apply a correction directly from the expanded issue view
-
-### Sidebar Field
-
-The sidebar field appears in the editor for every target collection:
-
-- **Score badge** — Color-coded (green ≥95, yellow ≥80, red <80)
-- **Stats bar** — Word count, issue count, last check time
-- **Issue cards** — Each issue shows message, context with highlighted error, suggestion
-- **Fix button** — Applies the suggestion directly in the Lexical JSON
-- **Ignore button** — Removes the issue from the current view
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## API Endpoints
-
-All endpoints require authentication (Payload admin user).
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/spellcheck/validate` | `POST` | Check a single document or raw text |
-| `/api/spellcheck/fix` | `POST` | Apply a correction in Lexical JSON (offset-based) |
-| `/api/spellcheck/bulk` | `POST` | Scan all documents (sequential, rate-limited) |
-| `/api/spellcheck/status` | `GET` | Get current bulk scan progress |
-| `/api/spellcheck/dictionary` | `GET` | List all dictionary words |
-| `/api/spellcheck/dictionary` | `POST` | Add word(s) to dictionary |
-| `/api/spellcheck/dictionary` | `DELETE` | Remove word(s) from dictionary |
-
-### POST `/api/spellcheck/validate`
-
-```json
-// Check a document by ID
-{ "id": "123", "collection": "pages" }
-
-// Check raw text
-{ "text": "Ceci est une test.", "language": "fr" }
-```
-
-**Response:**
-
-```json
-{
-  "docId": "123",
-  "collection": "pages",
-  "score": 85,
-  "issueCount": 2,
-  "wordCount": 450,
-  "issues": [
-    {
-      "ruleId": "GRAMMAR",
-      "category": "GRAMMAR",
-      "message": "Le déterminant « une » ne correspond pas...",
-      "context": "Ceci est une test.",
-      "original": "une",
-      "replacements": ["un"],
-      "source": "languagetool"
-    }
-  ],
-  "lastChecked": "2025-02-22T20:30:00.000Z"
-}
-```
-
-### POST `/api/spellcheck/fix`
-
-```json
-{
-  "id": "123",
-  "collection": "pages",
-  "original": "une test",
-  "replacement": "un test",
-  "offset": 42,
-  "length": 8
-}
-```
-
-> `offset` and `length` enable precise offset-based targeting (v0.8.0+). Falls back to substring search if omitted.
-
-### GET `/api/spellcheck/dictionary`
-
-**Response:**
-
-```json
-{ "words": [{ "id": "1", "word": "typescript", "addedBy": { "email": "admin@example.com" }, "createdAt": "..." }], "count": 1 }
-```
-
-### POST `/api/spellcheck/dictionary`
-
-```json
-// Single word
-{ "word": "TypeScript" }
-
-// Multiple words
-{ "words": ["TypeScript", "Next.js", "Payload"] }
-```
-
-### DELETE `/api/spellcheck/dictionary`
-
-```json
-// Single
-{ "id": "abc123" }
-
-// Multiple
-{ "ids": ["abc123", "def456"] }
-```
-
-### POST `/api/spellcheck/bulk`
-
-```json
-// Scan all configured collections
-{}
-
-// Scan a specific collection
-{ "collection": "posts" }
-```
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Engine
-
-### Text Extraction
-
-The plugin extracts text from Payload documents by recursively traversing:
-
-1. **Title** — Document title
-2. **Hero** — `hero.richText` (Lexical JSON)
-3. **Content** — Main content field (Lexical JSON)
-4. **Layout blocks** — Each block's `richText` and `columns[].richText`
-
-Code blocks are automatically skipped (not natural language).
-
-### LanguageTool
-
-- **API**: `POST https://api.languagetool.org/v2/check` (free, no auth)
-- **Limit**: 18,000 characters per request (auto-truncated)
-- **Rate**: 3-second delay between bulk requests
-- **Timeout**: 30 seconds per request
-
-### Filtering
-
-Issues are filtered through multiple layers:
-
-1. **Premium rules** — Skipped (free API only)
-2. **Configured rules** — `skipRules` option
-3. **Configured categories** — `skipCategories` option
-4. **Custom dictionary** — Case-insensitive word matching
-5. **Single-character** — Skipped (often punctuation false positives)
-
-### Scoring
-
-Score = `max(0, 100 - (issues / words * 1000))`
-
-- **100** — No issues
-- **90+** — Excellent (green)
-- **80+** — Good (yellow)
-- **<80** — Needs work (red)
-
-### Claude AI (Optional)
-
-When `enableAiFallback: true`, the plugin also sends text to Claude Haiku for:
-
-- Inconsistent tone or register
-- Incoherent statements or contradictions
-- Awkward phrasing
-- Missing words that change meaning
-
-Claude issues are tagged with `source: 'claude'` and category `COHERENCE`, `TONE`, `PHRASING`, or `MISSING_WORD`.
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Collections
-
-The plugin auto-creates two collections:
-
-| Collection | Slug | Description |
-|------------|------|-------------|
-| SpellCheck Results | `spellcheck-results` | Stores check results per document |
-| SpellCheck Dictionary | `spellcheck-dictionary` | Dynamic dictionary (one doc per word) |
-
-**Results fields**: `docId`, `collection`, `title`, `slug`, `score`, `issueCount`, `wordCount`, `issues` (JSON), `lastChecked`
-
-**Dictionary fields**: `word` (text, unique, indexed), `addedBy` (relationship to users)
-
-Both collections are hidden from the admin nav. The dictionary is managed via the Dashboard's "Dictionnaire" tab or the REST API.
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Package Exports
-
-### Main Entry (`@consilioweb/payload-spellcheck`)
-
-```typescript
-// Plugin
-export { spellcheckPlugin } from './plugin'
-
-// Types
-export type { SpellCheckPluginConfig, SpellCheckIssue, SpellCheckResult } from './types'
-
-// Engine (for programmatic use)
-export { extractTextFromLexical, countWords } from './engine/lexicalParser'
-export { checkWithLanguageTool } from './engine/languagetool'
-export { checkWithClaude } from './engine/claude'
-export { filterFalsePositives, calculateScore } from './engine/filters'
-
-// Dictionary cache
-export { loadDictionaryWords, invalidateDictionaryCache } from './endpoints/dictionary'
-
-// i18n
-export { getTranslations, getScoreLabel } from './i18n'
-```
-
-### Client Entry (`@consilioweb/payload-spellcheck/client`)
-
-```typescript
-export { SpellCheckField } from './components/SpellCheckField'
-export { SpellCheckDashboard } from './components/SpellCheckDashboard'
-export { IssueCard } from './components/IssueCard'
-```
-
-### Views Entry (`@consilioweb/payload-spellcheck/views`)
-
-```typescript
-export { SpellCheckView } from './views/SpellCheckView'
-```
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Requirements
-
-- **Node.js** >= 18
-- **Payload CMS** 3.x
-- **React** 18.x or 19.x
-- **Any Payload DB adapter** (SQLite, PostgreSQL, MongoDB)
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Uninstall
-
-### Automatic (recommended)
-
-```bash
-npx spellcheck-uninstall
-```
-
-This will:
-1. Remove all `@consilioweb/payload-spellcheck` imports and plugin calls from your source files
-2. Drop the `spellcheck_results` table and indexes from your database
-3. Remove the npm package
-4. Regenerate the import map
-
-> Use `--keep-data` to preserve the database table.
-
-### Manual
-
-1. Remove the plugin from your config
-2. Run `npx payload generate:importmap`
-3. (Optional) Drop the database table:
-
-```sql
--- SQLite
-DROP INDEX IF EXISTS `spellcheck_results_doc_id_idx`;
-DROP INDEX IF EXISTS `spellcheck_results_collection_idx`;
-DROP INDEX IF EXISTS `spellcheck_results_last_checked_idx`;
-DROP TABLE IF EXISTS `spellcheck_results`;
-```
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Changelog
-
-### v0.13.0
-
-- **New**: RBAC with configurable `access` function in plugin config
-- **New**: `packageName` option for custom package name in component paths
-- **New**: `useSpellcheckI18n` hook for component localization
-- **New**: i18n integration in SpellCheckField and IssueCard components
-- **New**: Client-side score cache (30s TTL) in SpellCheckScoreCell
-- **New**: Collection injection protection on validate, fix, fixAll endpoints
-- **New**: IP spoofing protection with `trustProxy` option
-- **Changed**: fixAll calls fix logic directly instead of HTTP self-fetch (eliminates SSRF)
-- **Changed**: URL built from NEXT_PUBLIC_SERVER_URL, not Origin header
-- **Changed**: Score formula alignment between client and server
-
-### v0.8.1
-
-- **Fix**: Corrections now remove the issue from the UI immediately (optimistic update)
-- **Fix**: "Ignorer" persists in DB across page reloads (was local state only)
-- **Fix**: Auto-fix missing DB columns on init (`push:true` compatibility for SQLite/Postgres)
-
-### v0.8.0
-
-- **New**: Dynamic dictionary — manage words from the admin dashboard (add/remove/import/export)
-- **New**: `spellcheck-dictionary` collection (one document per word, merged with config dictionary)
-- **New**: Dictionary REST API (GET/POST/DELETE at `/api/spellcheck/dictionary`)
-- **New**: Offset-based corrections — precise fix targeting using LanguageTool offsets
-- **New**: "Add to dictionary" button on issue cards (+ Dico)
-- **New**: "Ignore" button to dismiss false positives
-- **New**: Dictionary tab in the dashboard with search, bulk delete, import/export
-- **New**: In-memory cache (5-min TTL) for dictionary DB queries
-- **Changed**: `filterFalsePositives` is now async (merges config + DB dictionaries)
-- **Changed**: Fix endpoint accepts `offset` and `length` parameters (falls back to substring search)
-
-### v0.5.0 — v0.7.0
-
-- Custom dictionary config, contextual multi-word filtering, background scan
-- Lexical ghost space fix, extended French dictionary
-- Contextual offset, manual edit input, repetition filter
-
-<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="-----" />
-
-## Roadmap
-
-- Bulk scan with AI (Claude) integration
-- Export spell check results as CSV/JSON
-- Webhook / notification on new issues found
-- Per-field spellcheck configuration
-- Custom dictionaries per collection
-- Grammar rules beyond spelling (style, tone, consistency)
-- Auto-correct suggestions with one-click apply
-- Integration with external APIs (Grammarly, LanguageTool Cloud)
-
-## ☕ Support
-
-If this plugin saves you time, consider buying me a coffee!
-
-<a href="https://buymeacoffee.com/pown3d">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="217" />
-</a>
+- Issues and feature requests: [GitHub issues](https://github.com/pOwn3d/payload-spellcheck/issues)
+- If this plugin saves you time: [buy me a coffee](https://buymeacoffee.com/pown3d)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
 
-<p align="center">
-  <br />
-  Made with ❤️ by <a href="https://consilioweb.fr">ConsilioWEB</a>
-  <br />
-  <br />
-  <a href="https://www.linkedin.com/in/christophe-lopez-dev/"><img src="https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
-  <a href="https://github.com/pOwn3d"><img src="https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white" alt="GitHub" /></a>
-  <a href="https://consilioweb.fr"><img src="https://img.shields.io/badge/Web-consilioweb.fr-2563eb" alt="Website" /></a>
-</p>
+---
+
+Made by [ConsilioWEB](https://consilioweb.fr) · [GitHub](https://github.com/pOwn3d)

@@ -41,6 +41,13 @@ function fixInLexicalTree(
 
     if (targetOffset >= nodeStart && targetOffset < nodeEnd) {
       const posInNode = targetOffset - nodeStart
+      // Refuse spans that reach past this text node: slice() would silently
+      // clamp, replacing less than intended and leaving the tail of the match
+      // behind in the next node (duplicated word). Better to fail than to
+      // corrupt — the caller reports success: false.
+      if (posInNode + targetLength > node.text.length) {
+        return { fixed: false, chars: node.text.length }
+      }
       node.text = node.text.slice(0, posInNode) + replacement + node.text.slice(posInNode + targetLength)
       return { fixed: true, chars: node.text.length }
     }
@@ -96,7 +103,9 @@ function applyFixAtOffset(
   for (const segment of segments) {
     const segEnd = pos + segment.text.length
     if (rawTargetOffset >= pos && rawTargetOffset < segEnd) {
-      const localOffset = rawTargetOffset - pos
+      // `segment.text` is the TRIMMED extraction; the mutation walks the raw
+      // tree, so add back whatever the trim removed at the front.
+      const localOffset = rawTargetOffset - pos + segment.leadingTrim
       return applyFixToSegment(segment, localOffset, targetLength, replacement, docClone)
     }
     pos = segEnd + 1
@@ -288,6 +297,13 @@ export interface FixParams {
   offset?: number
   length?: number
   field?: string
+  /**
+   * Refuse every heuristic fallback (closest-match search, substring replace)
+   * and only apply the fix when `fullText.slice(offset, offset + length)`
+   * really equals `original`. Used by /fix-all, where a stale offset must not
+   * silently rewrite some other occurrence in a batch nobody reviews.
+   */
+  strict?: boolean
 }
 
 export interface FixResult {
@@ -297,6 +313,20 @@ export interface FixResult {
   replacement: string
   method?: string
   error?: string
+  /**
+   * Where the correction was written: 'draft' when the document had a pending
+   * draft (the published version is left untouched), 'published' otherwise.
+   */
+  target?: 'draft' | 'published'
+  /**
+   * Offset in the extracted text where the replacement was written, and the
+   * length of the span it replaced. Only set on the offset/search paths (the
+   * legacy substring fallback has no coordinates). Callers use them to
+   * re-align the offsets of the issues still stored for this document — the
+   * update carries `skipSpellcheck`, so nothing else will.
+   */
+  appliedOffset?: number
+  appliedLength?: number
 }
 
 /**
@@ -309,7 +339,7 @@ export async function applyFix(
   pluginConfig: SpellCheckPluginConfig,
   logger?: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<FixResult> {
-  const { id, collection, original, replacement, offset, length, field } = params
+  const { id, collection, original, replacement, offset, length, field, strict = false } = params
   const contentField = field || pluginConfig.contentField || 'content'
 
   const findResult = await payload.find({
@@ -331,6 +361,11 @@ export async function applyFix(
 
   let result: { fixed: boolean; modifiedField: string | null }
   let method = 'legacy'
+  // Offset in `fullText` where the replacement was written, and the length of
+  // the span it replaced, when known. Used by the post-mutation verification
+  // below and returned so the caller can re-align the remaining issues.
+  let appliedOffset: number | null = null
+  let appliedLength = 0
 
   if (typeof offset === 'number' && typeof length === 'number') {
     const actual = fullText.slice(offset, offset + length)
@@ -338,8 +373,12 @@ export async function applyFix(
     if (actual === original) {
       result = applyFixAtOffset(segments, fullText, offset, length, replacement, doc)
       method = 'offset'
+      if (result.fixed) {
+        appliedOffset = offset
+        appliedLength = length
+      }
     } else {
-      const foundOffset = findClosestMatch(fullText, original, offset)
+      const foundOffset = strict ? -1 : findClosestMatch(fullText, original, offset)
 
       if (foundOffset >= 0) {
         logger?.info(
@@ -347,17 +386,32 @@ export async function applyFix(
         )
         result = applyFixAtOffset(segments, fullText, foundOffset, original.length, replacement, doc)
         method = 'search'
+        if (result.fixed) {
+          appliedOffset = foundOffset
+          appliedLength = original.length
+        }
       } else {
         logger?.warn(
-          `[spellcheck/fix] "${original}" not found in extracted text (${fullText.length} chars)`,
+          `[spellcheck/fix] "${original}" not found at offset ${offset} in extracted text (${fullText.length} chars)`,
         )
         result = { fixed: false, modifiedField: null }
       }
     }
 
-    if (!result.fixed) {
+    if (!result.fixed && !strict) {
       result = legacyFixSubstring(doc, original, replacement, contentField)
       if (result.fixed) method = 'legacy'
+    }
+  } else if (strict) {
+    // Strict callers (batch fix-all) must supply offset + length: the substring
+    // fallback rewrites the FIRST occurrence in the document, which is the wrong
+    // one as soon as the word appears twice.
+    return {
+      success: false,
+      fixesApplied: 0,
+      original,
+      replacement,
+      error: 'Strict mode requires offset and length',
     }
   } else {
     result = legacyFixSubstring(doc, original, replacement, contentField)
@@ -370,6 +424,27 @@ export async function applyFix(
       original,
       replacement,
       error: 'Could not locate the text to fix',
+    }
+  }
+
+  // Post-mutation verification. The offset paths mutate a Lexical tree in place;
+  // a mis-aligned offset used to write garbage into the document and still
+  // report success: true. Re-extract from the mutated doc and refuse to persist
+  // unless the replacement really landed where it was supposed to.
+  if (appliedOffset !== null) {
+    const { fullText: verifyText } = extractAllTextFromDocWithSources(doc, contentField)
+    const written = verifyText.slice(appliedOffset, appliedOffset + replacement.length)
+    if (written !== replacement) {
+      logger?.warn(
+        `[spellcheck/fix] Verification failed at offset ${appliedOffset}: expected "${replacement}", got "${written}" — not saving`,
+      )
+      return {
+        success: false,
+        fixesApplied: 0,
+        original,
+        replacement,
+        error: 'Fix verification failed — document left untouched',
+      }
     }
   }
 
@@ -391,11 +466,22 @@ export async function applyFix(
       break
   }
 
+  // The document was READ with draft: true (needed for offset alignment with the
+  // scan). Writing it back WITHOUT draft: true takes the draft content we just
+  // read and saves it as the main row: a page with a pending draft loses its
+  // published version, and the rest of the draft overwrites what was online.
+  // Mirror the state we read instead.
+  const isPendingDraft = doc._status === 'draft'
+
   await payload.update({
     collection,
     id,
     data: updateData,
     overrideAccess: true,
+    ...(isPendingDraft ? { draft: true } : {}),
+    // Anti-loop: this update must not re-trigger the afterChange spellcheck,
+    // which would fire a full LanguageTool request per corrected word.
+    context: { skipSpellcheck: true },
   })
 
   return {
@@ -404,5 +490,7 @@ export async function applyFix(
     original,
     replacement,
     method,
+    target: isPendingDraft ? 'draft' : 'published',
+    ...(appliedOffset !== null ? { appliedOffset, appliedLength } : {}),
   }
 }

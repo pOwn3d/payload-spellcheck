@@ -34,16 +34,28 @@ interface LTResponse {
 }
 
 /**
- * Check text with LanguageTool API.
- * Returns raw SpellCheckIssue[] (before filtering).
+ * Outcome of a LanguageTool call.
+ *
+ * A failed check MUST NOT be confused with "no mistakes found": returning an
+ * empty array on a 429/timeout/5xx made calculateScore() report 100/100 and
+ * that perfect score was then written over a stored result that held real
+ * issues. Callers have to branch on `ok`.
  */
-export async function checkWithLanguageTool(
+export type LanguageToolOutcome =
+  | { ok: true; issues: SpellCheckIssue[] }
+  | { ok: false; reason: string }
+
+/**
+ * Check text with LanguageTool API.
+ * Returns a discriminated outcome — prefer this over checkWithLanguageTool().
+ */
+export async function runLanguageToolCheck(
   text: string,
   language: string,
   config: SpellCheckPluginConfig,
   logger?: { error: (msg: string) => void },
-): Promise<SpellCheckIssue[]> {
-  if (!text.trim()) return []
+): Promise<LanguageToolOutcome> {
+  if (!text.trim()) return { ok: true, issues: [] }
 
   const apiUrl = config.languageToolUrl || DEFAULT_LANGUAGETOOL_API
   const maxTextLength = config.timeouts?.maxTextLengthLanguageTool ?? DEFAULT_MAX_TEXT_LENGTH
@@ -86,16 +98,35 @@ export async function checkWithLanguageTool(
     }
 
     const data = (await response.json()) as LTResponse
-    return parseMatches(data.matches || [])
+    return { ok: true, issues: parseMatches(data.matches || []) }
   } catch (error) {
     clearTimeout(timeoutId)
     if ((error as Error).name === 'AbortError') {
-      logger?.error('[spellcheck] LanguageTool request timed out')
-      return []
+      const reason = `LanguageTool request timed out after ${requestTimeout}ms`
+      logger?.error(`[spellcheck] ${reason}`)
+      return { ok: false, reason }
     }
-    logger?.error(`[spellcheck] LanguageTool error: ${error instanceof Error ? error.message : error}`)
-    return []
+    const reason = error instanceof Error ? error.message : String(error)
+    logger?.error(`[spellcheck] LanguageTool error: ${reason}`)
+    return { ok: false, reason }
   }
+}
+
+/**
+ * Backwards-compatible wrapper: returns [] when the check fails.
+ *
+ * @deprecated Use runLanguageToolCheck() — an empty array here is
+ * indistinguishable from "the text is clean", which silently turns an API
+ * outage into a perfect score.
+ */
+export async function checkWithLanguageTool(
+  text: string,
+  language: string,
+  config: SpellCheckPluginConfig,
+  logger?: { error: (msg: string) => void },
+): Promise<SpellCheckIssue[]> {
+  const outcome = await runLanguageToolCheck(text, language, config, logger)
+  return outcome.ok ? outcome.issues : []
 }
 
 /**

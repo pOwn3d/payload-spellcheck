@@ -7,13 +7,14 @@
 import type { PayloadHandler } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckIssue, SpellCheckResult } from '../types.js'
 import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
-import { checkWithLanguageTool } from '../engine/languagetool.js'
-import { checkWithClaude } from '../engine/claude.js'
+import { runLanguageToolCheck } from '../engine/languagetool.js'
+import { runClaudeCheck } from '../engine/claude.js'
 import { filterFalsePositives, calculateScore } from '../engine/filters.js'
 import { analyzeReadability, type ReadabilityResult } from '../engine/readability.js'
 import { checkConsistency, type ConsistencyIssue } from '../engine/consistency.js'
 import { upsertSpellcheckResult, findSpellcheckResult } from '../utils/upsertResult.js'
 import { filterIgnoredIssues, type IgnoredIssue } from '../utils/filterIgnored.js'
+import { createAccessGuard } from './access.js'
 
 /** Maximum text length accepted for validation (characters) */
 const MAX_TEXT_LENGTH = 50_000
@@ -21,16 +22,11 @@ const MAX_TEXT_LENGTH = 50_000
 export function createValidateHandler(
   pluginConfig: SpellCheckPluginConfig,
 ): PayloadHandler {
+  const guard = createAccessGuard(pluginConfig)
   return async (req) => {
     try {
       // RBAC: check access (default: admin only)
-      const accessFn = pluginConfig.access || ((r: { user?: Record<string, unknown> | null }) => {
-        const u = r.user as Record<string, unknown> | null | undefined
-        return Boolean(u?.role === 'admin' || (Array.isArray(u?.roles) && (u!.roles as string[]).includes('admin')))
-      })
-      if (!req.user || !accessFn(req)) {
-        return Response.json({ error: 'Unauthorized' }, { status: 403 })
-      }
+      if (!guard.isAllowed(req)) return guard.forbidden()
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const body = await (req as any).json().catch(() => ({}))
@@ -110,13 +106,39 @@ export function createValidateHandler(
 
       const wordCount = countWords(textToCheck)
 
-      // Check with LanguageTool
-      let issues: SpellCheckIssue[] = await checkWithLanguageTool(textToCheck, language, pluginConfig)
+      // Check with LanguageTool.
+      // A failed call must NOT be reported as "0 issue / score 100" and stored
+      // over a previous result that held real mistakes — fail loudly instead.
+      const ltOutcome = await runLanguageToolCheck(textToCheck, language, pluginConfig, req.payload.logger)
+      if (!ltOutcome.ok) {
+        return Response.json(
+          {
+            error: `Spellcheck engine unavailable: ${ltOutcome.reason}`,
+            checkFailed: true,
+          },
+          { status: 502 },
+        )
+      }
+      let issues: SpellCheckIssue[] = ltOutcome.issues
 
-      // Optional Claude fallback for semantic issues
+      // Optional Claude fallback for semantic issues.
+      // Non-fatal: Claude only enriches the LanguageTool result, so a failure
+      // degrades the answer instead of invalidating it.
       if (pluginConfig.enableAiFallback && pluginConfig.anthropicApiKey) {
-        const claudeIssues = await checkWithClaude(textToCheck, language, pluginConfig.anthropicApiKey, pluginConfig)
-        issues = [...issues, ...claudeIssues]
+        const claudeOutcome = await runClaudeCheck(
+          textToCheck,
+          language,
+          pluginConfig.anthropicApiKey,
+          pluginConfig,
+          req.payload.logger,
+        )
+        if (claudeOutcome.ok) {
+          issues = [...issues, ...claudeOutcome.issues]
+        } else {
+          req.payload.logger.warn(
+            `[spellcheck/validate] Claude fallback skipped: ${claudeOutcome.reason}`,
+          )
+        }
       }
 
       // Filter false positives (async — loads dynamic dictionary from DB)
