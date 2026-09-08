@@ -5,7 +5,7 @@
 
 import type { CollectionConfig } from 'payload'
 import type { SpellCheckPluginConfig } from '../types.js'
-import { createAccessGuard } from '../endpoints/access.js'
+import { createAccessGuard, type AccessGuardRequest } from '../endpoints/access.js'
 
 export function createSpellCheckResultsCollection(
   pluginConfig?: SpellCheckPluginConfig,
@@ -15,8 +15,11 @@ export function createSpellCheckResultsCollection(
   // write `issues` that /fix-all later applies to published documents with
   // overrideAccess: true. The plugin writes to this collection internally with
   // overrideAccess: true, so tightening it does not affect scans or fixes.
+  // The guard also checks that the user authenticated against the admin
+  // collection (config.admin.user): an account of a front-office auth
+  // collection carrying role:'admin' in ITS OWN collection used to pass.
   const guard = createAccessGuard(pluginConfig)
-  const allow = ({ req }: { req: { user?: unknown } }): boolean => guard.isAllowed(req)
+  const allow = ({ req }: { req: AccessGuardRequest }): boolean => guard.isAllowed(req)
 
   return {
     slug: 'spellcheck-results',

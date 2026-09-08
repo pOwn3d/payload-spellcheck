@@ -161,3 +161,167 @@ describe('plugin collections access', () => {
     expect(await access.read!({ req: { user: null } } as any)).toBe(false)
   })
 })
+
+/**
+ * A request carrying the sanitized config, so the guard can resolve which
+ * collection backs the admin panel. `collection` is what Payload puts on
+ * `req.user` after any HTTP login.
+ */
+function reqAs(user: Record<string, unknown> | null, overrides: Record<string, unknown> = {}): AnyReq {
+  return fakeReq({
+    user,
+    payload: {
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      config: { admin: { user: 'users' } },
+    },
+    ...overrides,
+  })
+}
+
+describe('auth collection gate', () => {
+  // A host with a front-office auth collection (customers, members, partners)
+  // hands those accounts a payload-token too. One of them carrying role:'admin'
+  // inside ITS OWN collection used to satisfy the default check and get the
+  // drafts of every scanned collection, plus /fix on published documents.
+  const frontOfficeAdmin = { id: 9, collection: 'customers', role: 'admin' }
+  const realAdmin = { id: 1, collection: 'users', role: 'admin' }
+
+  it('refuses an "admin" authenticated on another collection', async () => {
+    const config = buildConfig({ collections: ['pages'] })
+    const collections = findHandler(config, '/spellcheck/collections', 'get')
+
+    expect((await collections(reqAs(frontOfficeAdmin))).status).toBe(403)
+    expect((await collections(reqAs(realAdmin))).status).toBe(200)
+  })
+
+  it('holds even when the integrator passed `access: (req) => Boolean(req.user)`', async () => {
+    const config = buildConfig({
+      collections: ['pages'],
+      access: (req) => Boolean(req.user),
+    })
+    const collections = findHandler(config, '/spellcheck/collections', 'get')
+
+    // The README used to recommend exactly this snippet.
+    expect((await collections(reqAs({ id: 9, collection: 'newsletter' }))).status).toBe(403)
+    expect((await collections(reqAs({ id: 1, collection: 'users' }))).status).toBe(200)
+  })
+
+  it('closes the same door on the plugin collections, not just the endpoints', async () => {
+    const config = buildConfig({ collections: ['pages'] })
+    const payload = { config: { admin: { user: 'users' } } }
+
+    for (const slug of ['spellcheck-results', 'spellcheck-dictionary']) {
+      const collection = (config.collections || []).find((c) => c.slug === slug)!
+      const access = collection.access!
+      for (const op of ['read', 'create', 'update', 'delete'] as const) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect(await access[op]!({ req: { user: frontOfficeAdmin, payload } } as any)).toBe(false)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect(await access[op]!({ req: { user: realAdmin, payload } } as any)).toBe(true)
+      }
+    }
+  })
+
+  it('gates the dashboard view the same way', async () => {
+    const config = buildConfig({ collections: ['pages'] })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const isAllowed = (config.custom as any)?.spellcheck?.isAllowed
+    const payload = { config: { admin: { user: 'users' } } }
+    expect(isAllowed({ user: frontOfficeAdmin, payload })).toBe(false)
+    expect(isAllowed({ user: realAdmin, payload })).toBe(true)
+  })
+})
+
+describe('rate limiter ordering', () => {
+  it('does not let anonymous callers touch the limiter at all', async () => {
+    const config = buildConfig({ collections: ['pages'], rateLimits: { status: 2 } })
+    const status = findHandler(config, '/spellcheck/status', 'get')
+
+    // Anonymous flood, all forging the admin's egress IP. Each of these used to
+    // create a Map entry and eat the bucket the admin shares.
+    for (let i = 0; i < 20; i++) {
+      const res = await status(reqAs(null, { headers: new Headers({ 'x-forwarded-for': '203.0.113.7' }) }))
+      expect(res.status).toBe(403)
+    }
+
+    // The admin's budget is untouched.
+    const admin = { id: 1, collection: 'users', role: 'admin' }
+    expect((await status(reqAs(admin))).status).toBe(200)
+    expect((await status(reqAs(admin))).status).toBe(200)
+  })
+
+  it('keys the budget on the account, not on the caller-supplied IP', async () => {
+    const config = buildConfig({ collections: ['pages'], rateLimits: { status: 2 } })
+    const status = findHandler(config, '/spellcheck/status', 'get')
+    const admin = { id: 1, collection: 'users', role: 'admin' }
+
+    const withIp = (ip: string) => reqAs(admin, { headers: new Headers({ 'x-forwarded-for': ip }) })
+
+    expect((await status(withIp('198.51.100.1'))).status).toBe(200)
+    expect((await status(withIp('198.51.100.2'))).status).toBe(200)
+    // Rotating X-Forwarded-For used to hand out a fresh bucket every time.
+    expect((await status(withIp('198.51.100.3'))).status).toBe(429)
+  })
+})
+
+describe('/fix-all issue selection', () => {
+  function payloadWithIssues(issues: unknown[]) {
+    return {
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      config: { admin: { user: 'users' } },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      find: async ({ collection }: any) =>
+        collection === 'spellcheck-results'
+          ? { docs: [{ id: 1, issues }] }
+          : { docs: [] },
+    }
+  }
+
+  const claudeIssue = {
+    ruleId: 'CLAUDE_PHRASING',
+    category: 'PHRASING',
+    message: 'injected',
+    context: '',
+    contextOffset: 0,
+    offset: 0,
+    length: 7,
+    original: 'Bonjour',
+    replacements: ['Acheté sur evil.example'],
+    source: 'claude',
+  }
+  const languageToolIssue = { ...claudeIssue, ruleId: 'FR_SPELL', source: 'languagetool' }
+
+  it('never replays a Claude suggestion unattended', async () => {
+    const config = buildConfig({ collections: ['pages'] })
+    const fixAll = findHandler(config, '/spellcheck/fix-all', 'post')
+
+    const res = await fixAll(
+      reqAs({ id: 1, collection: 'users', role: 'admin' }, {
+        json: async () => ({ id: '1', collection: 'pages' }),
+        payload: payloadWithIssues([claudeIssue]),
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toEqual({ applied: 0, failed: 0, details: [] })
+  })
+
+  it('still processes LanguageTool issues sitting next to a Claude one', async () => {
+    const config = buildConfig({ collections: ['pages'] })
+    const fixAll = findHandler(config, '/spellcheck/fix-all', 'post')
+
+    const res = await fixAll(
+      reqAs({ id: 1, collection: 'users', role: 'admin' }, {
+        json: async () => ({ id: '1', collection: 'pages' }),
+        payload: payloadWithIssues([claudeIssue, languageToolIssue]),
+      }),
+    )
+
+    const body = await res.json()
+    // Exactly one attempt: the LanguageTool one (it fails here because the fake
+    // payload returns no document — what matters is that it was the only one).
+    expect(body.details).toHaveLength(1)
+    expect(body.applied + body.failed).toBe(1)
+  })
+})

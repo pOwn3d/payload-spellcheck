@@ -105,6 +105,25 @@ export interface SpellCheckPluginConfig {
   autoFixSchema?: boolean
 
   /**
+   * Maximum number of documents a single bulk scan will process (default: no
+   * cap). The scan pages through collections 200 documents at a time, so this
+   * bounds the duration of a run rather than its memory footprint — useful on
+   * large corpora where a full scan would otherwise run for hours.
+   */
+  maxDocs?: number
+
+  /**
+   * Silence the start-up warning about sending document content to the public
+   * LanguageTool API (default: `false`).
+   *
+   * With no `languageToolUrl`, every save of a scanned document — drafts
+   * included — is POSTed to `https://api.languagetool.org/v2/check`, a third
+   * party. Set `languageToolUrl` to a self-hosted instance to stop that, or set
+   * this flag to acknowledge the transfer and mute the warning.
+   */
+  acknowledgePublicApi?: boolean
+
+  /**
    * Trust `x-forwarded-for` / `x-real-ip` for the IP-based rate limiter
    * (default: `true`).
    *
