@@ -5,6 +5,141 @@ All notable changes to `@consilioweb/payload-spellcheck` will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-08 — A token from any auth collection was a spellcheck token
+
+Security release. 0.15.0 and every earlier version ship the holes this one closes.
+Read `### Security` to judge whether you were exposed, then `### Changed` for the
+accounts that lose access on the way.
+
+### Security
+
+- **Any account authenticated against any auth collection could reach the whole
+  plugin.** The gate was `!!req.user` plus the project's `access` function. On an
+  install with a second auth collection — `customers`, `members`, `partners`, the
+  norm on an e-commerce or multi-tenant site — those accounts carry a
+  `payload-token` too, and one holding `role: 'admin'` **inside its own
+  collection** satisfied the default check. That opened the nine
+  `/api/spellcheck/*` endpoints and both plugin collections: reading the
+  extracted text of every scanned document (drafts and never-published edits
+  included) through `spellcheck-results`, writing arbitrary `issues` into it, and
+  calling `/fix` and `/fix-all`, which write into published documents with
+  `overrideAccess: true`. The guard now also compares `req.user.collection` with
+  the collection backing the admin panel (`config.admin.user`), and it runs
+  **before** the configured `access` function — so an install that shipped
+  `access: (req) => Boolean(req.user)`, the snippet this README and the 0.15.0
+  migration note both recommended, is covered as well. If your project has more
+  than one auth collection, audit `spellcheck-results` for `issues` you did not
+  produce and the revision history of your scanned collections. Not covered: a
+  custom auth strategy that leaves `collection` off the user object, and user
+  objects built in host code for the Local API — HTTP authentication always sets
+  it.
+
+- **Document content was concatenated into the Claude prompt as instructions.**
+  The analysed text went in raw after a `Text:` label, so a paragraph phrased as
+  an instruction was read as one and could steer what the model returned as
+  issues and suggestions. The author of that text is anyone who can get content
+  into a scanned document — a contributor without publish rights, an import, a
+  syndicated feed. The content is now fenced in `<document_to_proofread>` tags
+  and declared as data, and any spelling of that tag is stripped from the content
+  before it goes in. Affects installs running `enableAiFallback: true` with an
+  `anthropicApiKey`; the LanguageTool path was never involved.
+
+- **A Claude suggestion could be written into a published document at a position
+  nobody computed.** Every Claude issue was stored with a hard-coded `offset: 0`
+  — the very start of the document. `/fix-all` walked those offsets and applied
+  the model's `suggestion` there, onto the title; on the single-fix path the
+  offset did not match, and the substring fallback applied it somewhere else
+  entirely. Chained with the injection above, document content could choose the
+  string written into a published page under one admin click on "fix
+  everything". Three changes: the real position is now located in the analysed
+  text; an `original` the model invented gets no coordinates and no replacement,
+  so it stays a readable remark and never an applicable edit; and `source:
+  'claude'` issues are excluded from `/fix-all` altogether (see `### Changed`).
+
+- **The rate limiter ran before authentication and keyed on a caller-supplied
+  header.** Two abuses, both available to an anonymous caller. One entry was
+  created in the limiter's Map per distinct `X-Forwarded-For` value, per limiter,
+  with no ceiling and a cleanup that only ran every five minutes — memory grew
+  with forged values. And a forged header carrying a known admin's address filled
+  that admin's bucket, denying them `/validate`, `/fix` or `/bulk`. The access
+  check now runs first, so an unauthenticated caller is answered `403` without
+  ever reaching the limiter, and the limiter keys on `user.collection:user.id`
+  instead of the IP. Each limiter also enforces a hard 5 000-key ceiling with
+  least-recently-seen eviction.
+
+- **A bulk scan loaded every matching document into memory at once.** The scan
+  ran `payload.find({ limit: 0 })` — no limit — per collection and held every
+  document, full Lexical trees included, for the whole run, plus every
+  `SpellCheckResult` it produced. With the 3 s pause between documents that is
+  roughly `docs × 3 s` of residency: about 50 minutes on a thousand pages. Any
+  caller who could reach `/bulk` — which, before the access fix above, included
+  every front-office account — could exhaust the Node process with a single
+  request. The scan now pages 200 documents at a time, drops each page before
+  fetching the next, and keeps a running average instead of the results.
+
+- **The public LanguageTool API is the default destination for your content, and
+  nothing said so.** With no `languageToolUrl` set, up to 18 000 characters of
+  extracted text — title, hero, rich text, every layout block, **drafts
+  included** — are POSTed in clear to `https://api.languagetool.org/v2/check` on
+  every save of a scanned collection (`checkOnSave`, on by default), on every
+  `/validate`, and for every document of a bulk scan. The transfer itself is
+  unchanged: turning it into an opt-in would break every existing install, and
+  that is a major-version decision. What changes is that the plugin now warns
+  about it at boot, and the README documents every outbound call under "Data sent
+  to third parties". Point `languageToolUrl` at a self-hosted LanguageTool to
+  stop the transfer, or set `acknowledgePublicApi: true` to acknowledge it and
+  mute the warning.
+
+- **Release pipeline.** The GitHub Actions used by the CI and npm publish
+  workflows are pinned to commit SHAs instead of floating `v4` tags, so a moved
+  tag can no longer change what builds and publishes this package.
+
+### Fixed
+
+- A bulk scan no longer stops silently after the first 200 documents when
+  `payload.find` returns no `hasNextPage` — paging also ends on a short or empty
+  page. Pages are ordered by `id`, so a document saved mid-scan is neither
+  skipped nor scanned twice.
+- Scan progress no longer reads `x / NaN` for the rest of a run when a collection
+  query answers without a numeric `totalDocs`: a non-finite count contributes 0
+  to the total instead of poisoning it.
+- A malformed Claude response no longer discards the entire Claude pass. A
+  payload that is not an array, or an item without a string `original`, used to
+  throw inside the parser and be reported as a failed check; non-conforming items
+  are now dropped and the rest is kept.
+
+### Changed
+
+- **Accounts outside the admin auth collection lose every access they had.** This
+  is the visible face of the first `### Security` item, and it is not
+  configurable: the collection check runs before your `access` function, so a
+  project that deliberately opened the plugin to a second auth collection can no
+  longer do so. Symptoms after updating: `403` on the endpoints, an empty sidebar
+  score and an empty dashboard table, and `403` on REST reads of
+  `spellcheck-results` and `spellcheck-dictionary`.
+- **`/fix-all` skips `source: 'claude'` issues.** They remain visible in the
+  dashboard and applicable one at a time through `/fix`, where a human sees what
+  is being replaced. If `enableAiFallback` is on, expect lower `fixed` counts, and
+  a document whose only issues are semantic now answers "nothing to fix".
+- **An unauthorised caller gets `403`, never `429`.** The access check moved ahead
+  of the rate limiter, so a client that distinguished the two status codes sees
+  the rejection change shape.
+- **Rate limits are counted per account instead of per IP.** Several admins behind
+  one address no longer share a bucket; conversely, one account calling from
+  several addresses now shares a single one. `trustProxy` still exists but now
+  only affects the fallback bucket, used when a request somehow reaches the
+  limiter without an account id.
+- **A warning is logged at boot** when no `languageToolUrl` is configured. If your
+  alerting watches `logger.warn`, it will fire on every start until you set
+  `languageToolUrl` or `acknowledgePublicApi: true`.
+
+### Added
+
+- `maxDocs` — upper bound on the number of documents a single bulk scan
+  processes. Unset means no cap, which is the previous behaviour.
+- `acknowledgePublicApi` — acknowledges the transfer to the public LanguageTool
+  API and silences the boot warning.
+
 ## [0.15.0] - 2026-09-07 — It reports the misspellings, and it stops corrupting what it corrects
 
 Spelling detection was switched back on, silent content corruption is now refused

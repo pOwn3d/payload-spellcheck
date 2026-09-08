@@ -162,6 +162,44 @@ export const spellcheckPlugin =
     const trustProxy = pluginConfig.trustProxy !== false
     const clientIp = (req: { headers: Headers }): string => getClientIp(req, trustProxy)
 
+    /**
+     * Rate-limiter key. The limiter now runs AFTER the access guard, so there
+     * is always an authenticated user: key on the account rather than on the
+     * caller-supplied `X-Forwarded-For`. That removes both abuses the header
+     * allowed — one Map entry per forged IP (unbounded growth), and filling a
+     * legitimate admin's bucket by forging their IP. The IP remains the
+     * fallback for the (unreachable over HTTP) case of a user without an id.
+     */
+    const rateLimitKey = (req: {
+      headers: Headers
+      user?: unknown
+    }): string => {
+      const u = req.user as { id?: unknown; collection?: unknown } | null | undefined
+      if (u && (typeof u.id === 'string' || typeof u.id === 'number')) {
+        return `user:${typeof u.collection === 'string' ? u.collection : ''}:${u.id}`
+      }
+      return `ip:${clientIp(req)}`
+    }
+
+    /**
+     * Wrap a handler with "access first, rate limit second".
+     *
+     * The order matters: while the limiter ran first, an anonymous caller could
+     * create an unbounded number of Map entries and evict an admin's quota
+     * without ever holding an account. The guard is re-evaluated inside each
+     * handler too — it is a pure function of the request, so running it twice
+     * costs nothing and keeps the handlers usable on their own.
+     */
+    const guarded = (
+      limiter: { check: (key: string) => boolean },
+      handler: import('payload').PayloadHandler,
+    ): import('payload').PayloadHandler =>
+      (async (req) => {
+        if (!accessGuard.isAllowed(req)) return accessGuard.forbidden()
+        if (!limiter.check(rateLimitKey(req))) return rateLimitResponse()
+        return handler(req)
+      }) as import('payload').PayloadHandler
+
     const rl = pluginConfig.rateLimits ?? {}
     const windowMs = rl.windowMs ?? 60_000
     const validateLimiter = createRateLimiter(rl.validate ?? 30, windowMs)
@@ -188,66 +226,42 @@ export const spellcheckPlugin =
       {
         path: `${basePath}/validate`,
         method: 'post' as const,
-        handler: ((req) => {
-          if (!validateLimiter.check(clientIp(req))) return rateLimitResponse()
-          return validateHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(validateLimiter, validateHandler),
       },
       {
         path: `${basePath}/fix`,
         method: 'post' as const,
-        handler: ((req) => {
-          if (!fixLimiter.check(clientIp(req))) return rateLimitResponse()
-          return fixHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(fixLimiter, fixHandler),
       },
       {
         path: `${basePath}/fix-all`,
         method: 'post' as const,
-        handler: ((req) => {
-          if (!fixAllLimiter.check(clientIp(req))) return rateLimitResponse()
-          return fixAllHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(fixAllLimiter, fixAllHandler),
       },
       {
         path: `${basePath}/bulk`,
         method: 'post' as const,
-        handler: ((req) => {
-          if (!bulkLimiter.check(clientIp(req))) return rateLimitResponse()
-          return bulkHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(bulkLimiter, bulkHandler),
       },
       {
         path: `${basePath}/status`,
         method: 'get' as const,
-        handler: ((req) => {
-          if (!statusLimiter.check(clientIp(req))) return rateLimitResponse()
-          return statusHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(statusLimiter, statusHandler),
       },
       {
         path: `${basePath}/dictionary`,
         method: 'get' as const,
-        handler: ((req) => {
-          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
-          return dictListHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(dictionaryLimiter, dictListHandler),
       },
       {
         path: `${basePath}/dictionary`,
         method: 'post' as const,
-        handler: ((req) => {
-          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
-          return dictAddHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(dictionaryLimiter, dictAddHandler),
       },
       {
         path: `${basePath}/dictionary`,
         method: 'delete' as const,
-        handler: ((req) => {
-          if (!dictionaryLimiter.check(clientIp(req))) return rateLimitResponse()
-          return dictDeleteHandler(req)
-        }) as import('payload').PayloadHandler,
+        handler: guarded(dictionaryLimiter, dictDeleteHandler),
       },
       {
         path: `${basePath}/collections`,
@@ -283,12 +297,34 @@ export const spellcheckPlugin =
       }
     }
 
-    // 5. Add onInit hook to auto-fix schema (push:true missing columns)
-    if (pluginConfig.autoFixSchema !== false) {
+    // 5. onInit: warn about the public LanguageTool endpoint, then auto-fix
+    //    schema (push:true missing columns).
+    //
+    // With no `languageToolUrl`, every save of a scanned document — drafts and
+    // never-published edits included — POSTs up to 18 000 characters of the
+    // document to https://api.languagetool.org, a third party the host has not
+    // contracted with and cannot list in its processing register. That is a
+    // deliberate default (the plugin works out of the box), but it must not be
+    // a silent one. Setting `languageToolUrl` (self-hosted instance) removes
+    // the transfer; `acknowledgePublicApi: true` mutes the warning.
+    const warnAboutPublicApi =
+      !pluginConfig.languageToolUrl && pluginConfig.acknowledgePublicApi !== true
+    const runAutoFixSchema = pluginConfig.autoFixSchema !== false
+
+    if (warnAboutPublicApi || runAutoFixSchema) {
       const existingOnInit = config.onInit
       config.onInit = async (payload) => {
         if (existingOnInit) await existingOnInit(payload)
-        await autoFixSchema(payload)
+        if (warnAboutPublicApi) {
+          payload.logger.warn(
+            '[spellcheck] No `languageToolUrl` configured: document content (drafts included) ' +
+              'is sent to the public API at https://api.languagetool.org/v2/check on every ' +
+              'save of a scanned collection and during bulk scans. Point `languageToolUrl` at ' +
+              'a self-hosted LanguageTool to keep the content in-house, or set ' +
+              '`acknowledgePublicApi: true` to silence this warning.',
+          )
+        }
+        if (runAutoFixSchema) await autoFixSchema(payload)
       }
     }
 

@@ -7,7 +7,7 @@
  * Scan continues server-side even if the user leaves the page.
  */
 
-import type { Payload, PayloadHandler } from 'payload'
+import type { Payload, PayloadHandler, Where } from 'payload'
 import type { SpellCheckPluginConfig, SpellCheckResult } from '../types.js'
 import { extractAllTextFromDoc, countWords } from '../engine/lexicalParser.js'
 import { runLanguageToolCheck } from '../engine/languagetool.js'
@@ -21,8 +21,26 @@ import { createAccessGuard } from './access.js'
 const DEFAULT_RATE_LIMIT_DELAY = 3_000 // 3 seconds between LanguageTool API calls
 const DEFAULT_STALE_TIMEOUT = 10 * 60 * 1000 // 10 minutes — consider job dead if no progress
 
+/**
+ * Documents fetched per query during the scan.
+ *
+ * The scan used to start with `payload.find({ limit: 0 })` per collection —
+ * "no limit" in Payload — and kept every document, full Lexical trees included,
+ * in a Map for the whole run. With a 3 s pause between documents that meant
+ * holding the entire corpus in memory for roughly `docs × 3 s`: about 50
+ * minutes on a thousand pages. Now a page is loaded, processed and dropped
+ * before the next one is fetched, so the resident set is bounded by PAGE_SIZE.
+ */
+const PAGE_SIZE = 200
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Query shape reused by both passes of a scan, per collection. */
+interface CollectionScanPlan {
+  hasDrafts: boolean
+  where: Where
 }
 
 /** In-memory scan job state (single-process Node.js) */
@@ -72,12 +90,22 @@ async function runBulkScan(
   const language = pluginConfig.language || 'fr'
   const contentField = pluginConfig.contentField || 'content'
   const rateLimitDelay = pluginConfig.timeouts?.bulkRateLimitDelay ?? DEFAULT_RATE_LIMIT_DELAY
-  const results: SpellCheckResult[] = []
+  // Running average only: keeping every SpellCheckResult (issues included) for
+  // the whole run was the second half of the memory problem.
+  let scoreSum = 0
+  let scoredDocs = 0
+
+  const configuredMaxDocs = pluginConfig.maxDocs
+  const maxDocs =
+    typeof configuredMaxDocs === 'number' && configuredMaxDocs > 0
+      ? configuredMaxDocs
+      : Number.POSITIVE_INFINITY
 
   try {
-    // First pass: count total documents
+    // First pass: count total documents (one `limit: 1` query per collection —
+    // only `totalDocs` is read, no document is materialised here).
     let totalToScan = 0
-    const docsByCollection: Map<string, Array<{ id: string | number; [k: string]: unknown }>> = new Map()
+    const plans: Map<string, CollectionScanPlan> = new Map()
 
     for (const collectionSlug of collectionsToScan) {
       // Isolate each collection: a single bad query used to abort the whole scan
@@ -97,27 +125,43 @@ async function runBulkScan(
           (payload.collections as any)?.[collectionSlug]?.config?.versions?.drafts,
         )
 
-        const allDocs = await payload.find({
+        const where: Where = idsForCollection
+          ? { id: { in: idsForCollection } }
+          : hasDrafts
+            ? { _status: { equals: 'published' } }
+            : {}
+
+        const countResult = await payload.find({
           collection: collectionSlug,
-          limit: 0,
-          depth: 0, // depth:0 — must match fix.ts for offset alignment
-          // Read latest version (including unpublished edits)
+          limit: 1,
+          depth: 0,
           ...(hasDrafts ? { draft: true } : {}),
           overrideAccess: true,
-          where: idsForCollection
-            ? { id: { in: idsForCollection } }
-            : hasDrafts
-              ? { _status: { equals: 'published' } }
-              : {},
+          where,
         })
 
-        docsByCollection.set(collectionSlug, allDocs.docs)
-        totalToScan += allDocs.docs.length
+        plans.set(collectionSlug, { hasDrafts, where })
+        // `totalDocs` is what the counting query is for, but it is an optional
+        // field of the adapter's answer: adding an `undefined` to the running
+        // total turns it into NaN, and the dashboard then shows a progress bar
+        // out of NaN for the whole scan. The scan itself is driven by the pages,
+        // not by this number.
+        totalToScan +=
+          typeof countResult.totalDocs === 'number' && Number.isFinite(countResult.totalDocs)
+            ? countResult.totalDocs
+            : 0
       } catch (collErr) {
         payload.logger.error(
           `[spellcheck/bulk] Skipping collection "${collectionSlug}": ${collErr instanceof Error ? collErr.message : collErr}`,
         )
       }
+    }
+
+    if (totalToScan > maxDocs) {
+      payload.logger.warn(
+        `[spellcheck/bulk] ${totalToScan} documents match, capping the scan at maxDocs=${maxDocs}`,
+      )
+      totalToScan = maxDocs
     }
 
     if (currentJob) {
@@ -132,114 +176,162 @@ async function runBulkScan(
     let failed = 0
 
     for (const collectionSlug of collectionsToScan) {
-      const docs = docsByCollection.get(collectionSlug) || []
+      const plan = plans.get(collectionSlug)
+      if (!plan) continue
 
-      for (const doc of docs) {
-        processed++
+      let page = 1
+      let done = false
+
+      while (!done && processed < maxDocs) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const docAny = doc as any
-        const docTitle = docAny.title || docAny.slug || String(doc.id)
-
-        // Update progress
-        if (currentJob) {
-          currentJob.current = processed
-          currentJob.currentDoc = docTitle
-          currentJob.lastActivity = Date.now()
+        let pageResult: { docs?: any[]; hasNextPage?: boolean }
+        try {
+          pageResult = (await payload.find({
+            collection: collectionSlug,
+            limit: PAGE_SIZE,
+            page,
+            depth: 0, // depth:0 — must match fix.ts for offset alignment
+            // Read latest version (including unpublished edits)
+            ...(plan.hasDrafts ? { draft: true } : {}),
+            overrideAccess: true,
+            where: plan.where,
+            // Deterministic paging: without an explicit sort a document saved
+            // mid-scan can shift between pages and be skipped or scanned twice.
+            sort: 'id',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          })) as any
+        } catch (pageErr) {
+          payload.logger.error(
+            `[spellcheck/bulk] Stopping collection "${collectionSlug}" at page ${page}: ${pageErr instanceof Error ? pageErr.message : pageErr}`,
+          )
+          break
         }
 
-        // Wrap each doc in try/catch — one failure doesn't kill the scan
-        try {
-          const text = extractAllTextFromDoc(docAny, contentField)
+        const pageDocs = Array.isArray(pageResult?.docs) ? pageResult.docs : []
 
-          if (!text.trim()) {
-            skipped++
-            continue
+        // Stop on what the page actually contains, not only on `hasNextPage`.
+        // Replacing `limit: 0` with paging made the scan depend on a field the
+        // caller does not control: an adapter (or a wrapper around
+        // `payload.find`) that omits `hasNextPage` would end the scan after the
+        // first 200 documents — a silent half-scan, invisible in the UI, which
+        // the unbounded version could not produce. A short page is the end of
+        // the collection everywhere; an empty one always is, which also rules
+        // out the mirror failure (a permanently `true` flag looping forever).
+        if (pageDocs.length === 0) done = true
+        else if (pageResult.hasNextPage === false) done = true
+        else if (pageResult.hasNextPage === undefined && pageDocs.length < PAGE_SIZE) done = true
+        page++
+
+        for (const doc of pageDocs) {
+          if (processed >= maxDocs) {
+            done = true
+            break
+          }
+          processed++
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const docAny = doc as any
+          const docTitle = docAny.title || docAny.slug || String(doc.id)
+
+          // Update progress
+          if (currentJob) {
+            currentJob.current = processed
+            currentJob.currentDoc = docTitle
+            currentJob.lastActivity = Date.now()
           }
 
-          const wordCount = countWords(text)
-
-          // Check with LanguageTool. On failure, count the document as failed
-          // and move on: writing a 0-issue / score-100 result would overwrite a
-          // previous result that held real mistakes.
-          const outcome = await runLanguageToolCheck(text, language, pluginConfig, payload.logger)
-          if (!outcome.ok) {
-            failed++
-            if (currentJob) currentJob.failed = failed
-            payload.logger.warn(
-              `[spellcheck/bulk] Check failed for "${docTitle}": ${outcome.reason} — result left untouched`,
-            )
-            await sleep(rateLimitDelay)
-            continue
-          }
-          let issues = await filterFalsePositives(outcome.issues, pluginConfig, payload)
-
-          // Load existing result to get ignoredIssues
-          const existingDoc = await findSpellcheckResult(payload, String(doc.id), collectionSlug)
-          const ignoredIssues: IgnoredIssue[] = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc.ignoredIssues : []
-
-          // Filter out user-ignored issues (persistent across rescans)
-          issues = filterIgnoredIssues(issues, ignoredIssues)
-
-          const score = calculateScore(wordCount, issues.length)
-          totalIssues += issues.length
-
-          // Run readability analysis
-          const readability = analyzeReadability(text, (language === 'en' ? 'en' : 'fr') as 'fr' | 'en')
-
-          // Run consistency check
-          const consistency = checkConsistency(text)
-
-          const result: SpellCheckResult = {
-            docId: String(doc.id),
-            collection: collectionSlug,
-            score,
-            issueCount: issues.length,
-            wordCount,
-            issues,
-            readability,
-            consistency,
-            lastChecked: new Date().toISOString(),
-          }
-          results.push(result)
-
-          // Store/update result in collection (preserve ignoredIssues)
+          // Wrap each doc in try/catch — one failure doesn't kill the scan
           try {
-            await upsertSpellcheckResult(payload, String(doc.id), collectionSlug, {
-              title: docAny.title || '',
-              slug: docAny.slug || '',
+            const text = extractAllTextFromDoc(docAny, contentField)
+
+            if (!text.trim()) {
+              skipped++
+              continue
+            }
+
+            const wordCount = countWords(text)
+
+            // Check with LanguageTool. On failure, count the document as failed
+            // and move on: writing a 0-issue / score-100 result would overwrite a
+            // previous result that held real mistakes.
+            const outcome = await runLanguageToolCheck(text, language, pluginConfig, payload.logger)
+            if (!outcome.ok) {
+              failed++
+              if (currentJob) currentJob.failed = failed
+              payload.logger.warn(
+                `[spellcheck/bulk] Check failed for "${docTitle}": ${outcome.reason} — result left untouched`,
+              )
+              await sleep(rateLimitDelay)
+              continue
+            }
+            let issues = await filterFalsePositives(outcome.issues, pluginConfig, payload)
+
+            // Load existing result to get ignoredIssues
+            const existingDoc = await findSpellcheckResult(payload, String(doc.id), collectionSlug)
+            const ignoredIssues: IgnoredIssue[] = Array.isArray(existingDoc?.ignoredIssues) ? existingDoc.ignoredIssues : []
+
+            // Filter out user-ignored issues (persistent across rescans)
+            issues = filterIgnoredIssues(issues, ignoredIssues)
+
+            const score = calculateScore(wordCount, issues.length)
+            totalIssues += issues.length
+
+            // Run readability analysis
+            const readability = analyzeReadability(text, (language === 'en' ? 'en' : 'fr') as 'fr' | 'en')
+
+            // Run consistency check
+            const consistency = checkConsistency(text)
+
+            const result: SpellCheckResult = {
+              docId: String(doc.id),
+              collection: collectionSlug,
               score,
               issueCount: issues.length,
               wordCount,
-              issues: issues as unknown as Record<string, unknown>[],
-              ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
-              readability: readability as unknown as Record<string, unknown>,
-              consistency: consistency as unknown as Record<string, unknown>[],
+              issues,
+              readability,
+              consistency,
               lastChecked: new Date().toISOString(),
-            })
-          } catch (err) {
-            payload.logger.error(`[spellcheck/bulk] Failed to store result for ${docTitle}: ${err instanceof Error ? err.message : err}`)
+            }
+            scoreSum += result.score
+          scoredDocs++
+
+            // Store/update result in collection (preserve ignoredIssues)
+            try {
+              await upsertSpellcheckResult(payload, String(doc.id), collectionSlug, {
+                title: docAny.title || '',
+                slug: docAny.slug || '',
+                score,
+                issueCount: issues.length,
+                wordCount,
+                issues: issues as unknown as Record<string, unknown>[],
+                ignoredIssues: ignoredIssues as unknown as Record<string, unknown>[],
+                readability: readability as unknown as Record<string, unknown>,
+                consistency: consistency as unknown as Record<string, unknown>[],
+                lastChecked: new Date().toISOString(),
+              })
+            } catch (err) {
+              payload.logger.error(`[spellcheck/bulk] Failed to store result for ${docTitle}: ${err instanceof Error ? err.message : err}`)
+            }
+          } catch (docErr) {
+            payload.logger.error(`[spellcheck/bulk] Error processing "${docTitle}": ${docErr instanceof Error ? docErr.message : docErr}`)
+            // Continue to next doc instead of crashing the entire scan
           }
-        } catch (docErr) {
-          payload.logger.error(`[spellcheck/bulk] Error processing "${docTitle}": ${docErr instanceof Error ? docErr.message : docErr}`)
-          // Continue to next doc instead of crashing the entire scan
-        }
 
-        // Update running totals
-        if (currentJob) {
-          currentJob.totalIssues = totalIssues
-          currentJob.totalDocuments = processed
-          currentJob.lastActivity = Date.now()
-        }
+          // Update running totals
+          if (currentJob) {
+            currentJob.totalIssues = totalIssues
+            currentJob.totalDocuments = processed
+            currentJob.lastActivity = Date.now()
+          }
 
-        // Rate limit delay
-        await sleep(rateLimitDelay)
+          // Rate limit delay
+          await sleep(rateLimitDelay)
+        }
       }
     }
 
     // Mark completed
-    const averageScore = results.length > 0
-      ? Math.round(results.reduce((sum, r) => sum + r.score, 0) / results.length)
-      : 100
+    const averageScore = scoredDocs > 0 ? Math.round(scoreSum / scoredDocs) : 100
 
     if (currentJob) {
       currentJob.status = 'completed'

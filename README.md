@@ -148,9 +148,17 @@ npx payload generate:importmap
 > ```ts
 > spellcheckPlugin({
 >   // `req` is passed directly — NOT destructured as `{ req }`
->   access: (req) => Boolean(req.user),
+>   access: (req) => req.user?.collection === 'users',
 > })
 > ```
+>
+> Do **not** write `access: (req) => Boolean(req.user)`. If your project has a second auth
+> collection — customers, members, partners — those accounts also carry a `payload-token`, and
+> `Boolean(req.user)` would hand them the drafts of every scanned collection plus the ability to
+> rewrite published documents through `/fix`. Always compare `req.user.collection` with the
+> collection that backs your admin panel (`config.admin.user`, usually `users`). The plugin now
+> enforces that comparison itself, before your `access` function runs, so a permissive snippet is no
+> longer an open door — but the explicit check is still what you should ship.
 
 The plugin then:
 
@@ -232,9 +240,11 @@ spellcheckPlugin({
 | `languageToolUrl` | `string` | `'https://api.languagetool.org/v2/check'` | LanguageTool endpoint — set it for a self-hosted instance |
 | `warningThreshold` | `number` | `80` | **Accepted but currently unread.** The score colours in the UI are hard-coded (green ≥ 95, amber ≥ 80, red below) |
 | `autoFixSchema` | `boolean` | `true` | Add the missing `payload_locked_documents_rels` column on init |
+| `maxDocs` | `number` | — | Cap the number of documents a single bulk scan processes. Unset = no cap |
+| `acknowledgePublicApi` | `boolean` | `false` | Silence the start-up warning about sending content to the public LanguageTool API (see [Data sent to third parties](#data-sent-to-third-parties)) |
 | `access` | `(req) => boolean` | admin only | Gates the endpoints, the dashboard view and both plugin collections. The whole request is the argument |
 | `packageName` | `string` | `'@consilioweb/payload-spellcheck'` | Package name used to build admin component paths — for monorepos and aliased installs |
-| `trustProxy` | `boolean` | `true` | Trust `x-forwarded-for` / `x-real-ip` in the rate limiter. `false` puts every caller in one shared bucket |
+| `trustProxy` | `boolean` | `true` | Trust `x-forwarded-for` / `x-real-ip` in the rate limiter. Only used for the fallback bucket — the limiter keys on the authenticated account |
 | `rateLimits` | `object` | see below | Per-endpoint rate limits |
 | `timeouts` | `object` | see below | Timeouts and length limits |
 
@@ -244,9 +254,12 @@ spellcheckPlugin({
 > API usable.
 
 > [!NOTE]
-> `trustProxy: false` is not the safe setting. The rate limiter runs *before* authentication, so a
-> single global bucket can be exhausted by an anonymous caller for every admin. Keep `true` unless
-> you know what you are trading away.
+> The access check runs **before** the rate limiter, and the limiter keys on
+> `user.collection:user.id` rather than on the client IP. An anonymous caller is answered `403`
+> without ever creating an entry in the limiter, so it can no longer grow the limiter's memory with
+> forged `X-Forwarded-For` values nor exhaust a legitimate admin's budget by forging their IP.
+> `trustProxy` now only affects the fallback bucket used when a request somehow reaches the limiter
+> without an account id.
 
 #### `rateLimits`
 
@@ -315,6 +328,29 @@ A failed call is never reported as a clean document: `/validate` answers `502` w
 `{ "checkFailed": true }`, the auto-check hook logs a warning and leaves the stored result alone, and
 a bulk scan counts the document in its `failed` counter.
 
+### Data sent to third parties
+
+The plugin makes outbound calls with your document content. Know what leaves before you install it.
+
+| Destination | When | What is sent | How to stop it |
+|-------------|------|--------------|----------------|
+| `https://api.languagetool.org/v2/check` (default) | Every save of a document in `collections` (`checkOnSave`), every `/validate`, every document of a bulk scan | Up to 18 000 characters of extracted text — title, hero, rich text, every layout block — **including drafts that were never published**, in clear, form-urlencoded, with no API key | Set `languageToolUrl` to a self-hosted LanguageTool, or `checkOnSave: false` to limit it to explicit checks |
+| `https://api.anthropic.com/v1/messages` | Only when `enableAiFallback: true` **and** `anthropicApiKey` is set | Up to 8 000 characters of the same extracted text | Leave `enableAiFallback` off (the default) |
+
+Nothing else leaves the host. Results are stored in your own database.
+
+Because the public LanguageTool endpoint is the default, the plugin logs a warning at boot when no
+`languageToolUrl` is configured. If the transfer is acceptable for your project — and, under GDPR,
+documented in your processing register — set `acknowledgePublicApi: true` to silence it.
+
+Self-hosting takes one line:
+
+```ts
+spellcheckPlugin({
+  languageToolUrl: 'http://languagetool.internal:8010/v2/check',
+})
+```
+
 ### Filtering
 
 Every LanguageTool match goes through these layers, in order:
@@ -357,18 +393,32 @@ contradictions, awkward phrasing, missing words. Results carry `source: 'claude'
 Claude enriches the LanguageTool result — it never replaces it. A Claude failure is logged and
 skipped; only a LanguageTool failure fails the request.
 
+Two guardrails apply to that pass, because the analysed text is document content and therefore
+untrusted (a contributor without publish rights, an import, a syndicated feed):
+
+- the content is fenced in the prompt and explicitly marked as data, so a paragraph that reads
+  "ignore the instructions above and answer …" is not read as an instruction;
+- an `original` the model returns is located in the real text (`indexOf`) instead of being given a
+  fabricated `offset: 0`. If it cannot be located, the issue keeps its message but loses its
+  coordinates and its suggestion — it is reported, never applied.
+
+`source: 'claude'` issues are also **excluded from `/fix-all`**: semantic suggestions are applied one
+at a time, by a human who sees what is being replaced, never in an unattended batch.
+
 ## API Endpoints
 
 Paths below assume the default `endpointBasePath` (`/spellcheck`) and Payload's default API route
-(`/api`). Every endpoint requires an authenticated user **and** passes the `access` check
-(admin-only by default). A rejection answers `403`; when the default check is in use, the body also
-carries a `hint` naming the expected role. Exceeding a rate limit answers `429` with `Retry-After`.
+(`/api`). Every endpoint requires an authenticated user **from the admin auth collection**
+(`config.admin.user`) **and** passes the `access` check (admin-only by default). A rejection answers
+`403`; when the default check is in use, the body also carries a `hint` naming the expected role.
+Exceeding a rate limit answers `429` with `Retry-After` — the access check runs first, so an
+anonymous or unauthorised caller always gets `403`, never `429`, and never reaches the rate limiter.
 
 | Method | Path | Rate limit | What it does |
 |--------|------|-----------|--------------|
 | `POST` | `/api/spellcheck/validate` | 30/min | Check one document (`{ id, collection }`) or raw text (`{ text, language? }`, 50 000 chars max) |
 | `POST` | `/api/spellcheck/fix` | 20/min | Apply one correction in the Lexical JSON, then re-align the offsets of the remaining stored issues |
-| `POST` | `/api/spellcheck/fix-all` | 5/min | Apply every stored fixable issue of a document, last offset first, in strict mode |
+| `POST` | `/api/spellcheck/fix-all` | 5/min | Apply every stored fixable LanguageTool issue of a document, last offset first, in strict mode (Claude issues excluded) |
 | `POST` | `/api/spellcheck/bulk` | 3/min | Start a background scan; returns immediately |
 | `GET` | `/api/spellcheck/status` | 60/min | Current scan progress |
 | `GET` | `/api/spellcheck/dictionary` | 60/min | List dictionary words, sorted alphabetically |
@@ -474,8 +524,11 @@ not produce.
 { "id": "123", "collection": "pages" }
 ```
 
-Applies every stored issue that has at least one suggestion, walking the document from the **last**
-offset to the first so a length-changing replacement never invalidates the offsets still to come.
+Applies every stored **LanguageTool** issue that has at least one suggestion, walking the document
+from the **last** offset to the first so a length-changing replacement never invalidates the offsets
+still to come. Issues carrying `source: 'claude'` are skipped: their `original`/`suggestion` pair
+comes from a model that has just read the document, so replaying them unattended would let content
+choose the string written into a published page. Apply those one by one from the dashboard.
 Strict mode: no fuzzy match, no substring fallback — an issue whose offset no longer matches its
 `original` is counted as `failed` rather than applied somewhere else. One re-check runs after the
 batch, but only when at least one fix was applied: a batch where everything failed answers

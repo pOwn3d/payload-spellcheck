@@ -85,8 +85,19 @@ export function createFixAllHandler(
         } satisfies FixAllResult)
       }
 
-      // Only process issues that have at least one replacement suggestion
-      const fixableIssues = issues.filter((issue) => issue.replacements.length > 0)
+      // Only process issues that have at least one replacement suggestion, and
+      // that come from LanguageTool.
+      //
+      // Claude issues are excluded on purpose: they are semantic remarks whose
+      // `original`/`suggestion` pair is produced by a model that has just read
+      // the document, i.e. text an author (or an imported feed) can influence.
+      // Replaying them unattended would let content choose the string written
+      // into a published document under an admin's "fix everything" click.
+      // They stay visible in the dashboard and applicable one by one, where a
+      // human sees what is being replaced.
+      const fixableIssues = issues.filter(
+        (issue) => issue.replacements.length > 0 && issue.source !== 'claude',
+      )
 
       if (fixableIssues.length === 0) {
         return Response.json({

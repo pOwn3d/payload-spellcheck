@@ -8,6 +8,13 @@ interface RateLimitEntry {
 }
 
 /**
+ * Hard ceiling on the number of tracked keys, per limiter.
+ * Well above any realistic number of admin accounts, low enough that the Map
+ * can never become a memory-pressure vector.
+ */
+const MAX_ENTRIES = 5_000
+
+/**
  * Create a rate limiter that allows `maxRequests` per `windowMs` milliseconds.
  * Returns a function that checks if a request from the given IP should be allowed.
  *
@@ -15,15 +22,21 @@ interface RateLimitEntry {
  *   const limiter = createRateLimiter(30, 60_000) // 30 req/min
  *   if (!limiter.check(ip)) return 429
  */
-export function createRateLimiter(maxRequests: number, windowMs: number) {
+export function createRateLimiter(maxRequests: number, windowMs: number, maxEntries = MAX_ENTRIES) {
   const store = new Map<string, RateLimitEntry>()
 
   // Periodic cleanup to prevent unbounded memory growth (every 5 minutes)
   const CLEANUP_INTERVAL = 5 * 60 * 1000
   let lastCleanup = Date.now()
 
-  function cleanup(now: number): void {
-    if (now - lastCleanup < CLEANUP_INTERVAL) return
+  /**
+   * `force` bypasses the 5-minute interval. Without it the only bound on the
+   * Map was "requests received in 5 minutes": one entry per distinct key, and
+   * the key used to be caller-controlled. The size trigger keeps that bounded
+   * whatever the key ends up being.
+   */
+  function cleanup(now: number, force = false): void {
+    if (!force && now - lastCleanup < CLEANUP_INTERVAL) return
     lastCleanup = now
 
     for (const [ip, entry] of store) {
@@ -32,9 +45,25 @@ export function createRateLimiter(maxRequests: number, windowMs: number) {
         store.delete(ip)
       }
     }
+
+    // Hard ceiling: if live entries alone exceed the cap, evict the least
+    // recently seen ones. Dropping an entry only forgets past requests, so the
+    // worst case is a caller getting a fresh budget — never a false 429.
+    if (store.size > maxEntries) {
+      const lastSeen = (entry: RateLimitEntry): number =>
+        entry.timestamps.length > 0 ? entry.timestamps[entry.timestamps.length - 1] : 0
+      const victims = [...store.entries()]
+        .sort((a, b) => lastSeen(a[1]) - lastSeen(b[1]))
+        .slice(0, store.size - maxEntries)
+      for (const [ip] of victims) store.delete(ip)
+    }
   }
 
   return {
+    /** Number of tracked keys — exposed for tests and diagnostics. */
+    get size(): number {
+      return store.size
+    },
     /**
      * Check if the request from `ip` is allowed.
      * Returns true if allowed, false if rate limit exceeded.
@@ -43,22 +72,31 @@ export function createRateLimiter(maxRequests: number, windowMs: number) {
       const now = Date.now()
       cleanup(now)
 
+      let allowed: boolean
       const entry = store.get(ip)
+
       if (!entry) {
         store.set(ip, { timestamps: [now] })
-        return true
+        allowed = true
+      } else {
+        // Remove timestamps outside the current window
+        const cutoff = now - windowMs
+        entry.timestamps = entry.timestamps.filter((t) => t > cutoff)
+
+        if (entry.timestamps.length >= maxRequests) {
+          allowed = false
+        } else {
+          entry.timestamps.push(now)
+          allowed = true
+        }
       }
 
-      // Remove timestamps outside the current window
-      const cutoff = now - windowMs
-      entry.timestamps = entry.timestamps.filter((t) => t > cutoff)
+      // Enforce the ceiling AFTER the insert, so the Map can never sit above it
+      // between two calls. The entry we just touched carries the freshest
+      // timestamp, so it is never the one evicted.
+      if (store.size > maxEntries) cleanup(now, true)
 
-      if (entry.timestamps.length >= maxRequests) {
-        return false
-      }
-
-      entry.timestamps.push(now)
-      return true
+      return allowed
     },
   }
 }
