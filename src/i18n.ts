@@ -57,6 +57,14 @@ export interface SpellcheckTranslations {
   errorFetching: string
   errorFixing: string
   unauthorized: string
+
+  // Error boundary
+  // Optional so that a consumer who builds its own SpellcheckTranslations
+  // object against an earlier version still type-checks. Every shipped locale
+  // defines them; the components fall back to French when they are missing.
+  errorBoundaryTitle?: string
+  errorBoundaryHint?: string
+  errorBoundaryRetry?: string
 }
 
 const fr: SpellcheckTranslations = {
@@ -107,6 +115,10 @@ const fr: SpellcheckTranslations = {
   errorFetching: 'Erreur lors de l\'analyse',
   errorFixing: 'Erreur lors de la correction',
   unauthorized: 'Non autorisé',
+
+  errorBoundaryTitle: 'Cette section n\'a pas pu s\'afficher',
+  errorBoundaryHint: 'Le reste de la page reste utilisable. Le détail technique est dans la console du navigateur.',
+  errorBoundaryRetry: 'Réessayer',
 }
 
 const en: SpellcheckTranslations = {
@@ -157,6 +169,10 @@ const en: SpellcheckTranslations = {
   errorFetching: 'Error during analysis',
   errorFixing: 'Error applying fix',
   unauthorized: 'Unauthorized',
+
+  errorBoundaryTitle: 'This section could not be displayed',
+  errorBoundaryHint: 'The rest of the page still works. Technical details are in the browser console.',
+  errorBoundaryRetry: 'Retry',
 }
 
 const translations: Record<SpellcheckLocale, SpellcheckTranslations> = { fr, en }

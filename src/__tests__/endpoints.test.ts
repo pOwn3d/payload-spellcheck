@@ -325,3 +325,55 @@ describe('/fix-all issue selection', () => {
     expect(body.applied + body.failed).toBe(1)
   })
 })
+
+/**
+ * The dashboard persists "ignore this issue" with a plain REST PATCH on
+ * `spellcheck-results` rather than through a plugin endpoint. That is only
+ * defensible while the collection's own `access` is the SAME gate the endpoints
+ * enforce — otherwise the PATCH becomes a way around them.
+ *
+ * These tests pin that equivalence. If someone ever loosens the collection
+ * (back to `!!req.user`, say, or by dropping the admin-collection check), they
+ * fail here, and the "no dedicated endpoint needed" decision recorded in
+ * `SpellCheckResults.ts` has to be re-opened rather than silently invalidated.
+ */
+describe('collection access matches endpoint access', () => {
+  function collectionAccess(config: Config, slug: string) {
+    const collection = (config.collections || []).find((c) => c.slug === slug)
+    if (!collection) throw new Error(`collection ${slug} not registered`)
+    return collection.access as Record<
+      'read' | 'create' | 'update' | 'delete',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (args: any) => boolean
+    >
+  }
+
+  const scenarios: Array<[string, Record<string, unknown>, boolean]> = [
+    ['an admin of the admin collection', { user: { id: 1, collection: 'users', role: 'admin' } }, true],
+    ['an editor of the admin collection', { user: { id: 2, collection: 'users', role: 'editor' } }, false],
+    // The escalation the 0.16.0 guard closed: `role: 'admin'` inside a SECOND
+    // auth collection. It must be refused by the collection exactly as the
+    // endpoint refuses it.
+    ['an "admin" of a front-office collection', { user: { id: 3, collection: 'customers', role: 'admin' } }, false],
+    ['an anonymous caller', { user: null }, false],
+  ]
+
+  for (const slug of ['spellcheck-results', 'spellcheck-dictionary']) {
+    for (const [label, overrides, expected] of scenarios) {
+      it(`${slug}: ${label} is treated the same as by /validate`, async () => {
+        const config = buildConfig({ collections: ['pages'] })
+        const payload = { config: { admin: { user: 'users' } } }
+        const req = fakeReq({ ...overrides, payload })
+
+        const access = collectionAccess(config, slug)
+        for (const operation of ['read', 'create', 'update', 'delete'] as const) {
+          expect(access[operation]!({ req }), `${slug}.${operation}`).toBe(expected)
+        }
+
+        const validate = findHandler(config, '/spellcheck/validate', 'post')
+        const res = await validate(req)
+        expect(res.status === 403).toBe(!expected)
+      })
+    }
+  }
+})

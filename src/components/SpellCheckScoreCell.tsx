@@ -6,6 +6,7 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import { AdminErrorBoundary } from './ErrorBoundary.js'
 
 // Client-side score cache to avoid N+1 queries (one fetch per cell in list view).
 // Entries expire after CACHE_TTL ms. The cache is module-scoped so it persists
@@ -19,7 +20,7 @@ interface SpellCheckScoreCellProps {
   cellData?: unknown
 }
 
-export const SpellCheckScoreCell: React.FC<SpellCheckScoreCellProps> = ({
+const SpellCheckScoreCellInner: React.FC<SpellCheckScoreCellProps> = ({
   rowData,
   collectionSlug,
 }) => {
@@ -96,5 +97,30 @@ export const SpellCheckScoreCell: React.FC<SpellCheckScoreCellProps> = ({
     </span>
   )
 }
+
+/**
+ * Payload renders this Cell ONCE PER ROW of a list view, and the plugin injects
+ * it into collections it does not own. Without the boundary a single row whose
+ * stored result is malformed takes the whole listing down — the host's content
+ * becomes unreachable because of a spellcheck badge.
+ *
+ * The boundary lives inside this module because the plugin has no ancestor in
+ * the host's tree: Payload mounts the exported component straight from the
+ * import map.
+ *
+ * `fallback={null}` on purpose: a failed badge must look like a missing badge,
+ * not like an error panel repeated on every row. `resetKeys` on the row id so a
+ * cell that failed for one document recovers when the table is re-sorted,
+ * filtered or paginated onto another one.
+ */
+export const SpellCheckScoreCell: React.FC<SpellCheckScoreCellProps> = (props) => (
+  <AdminErrorBoundary
+    viewName="SpellCheckScoreCell"
+    fallback={null}
+    resetKeys={[props.rowData?.id, props.collectionSlug]}
+  >
+    <SpellCheckScoreCellInner {...props} />
+  </AdminErrorBoundary>
+)
 
 export default SpellCheckScoreCell

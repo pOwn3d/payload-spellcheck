@@ -6,7 +6,7 @@
 
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useId } from 'react'
 import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
 import type { ReadabilityResult } from '../engine/readability.js'
@@ -129,6 +129,24 @@ const styles = {
     textTransform: 'uppercase' as const,
     letterSpacing: '0.5px',
     color: 'var(--theme-elevation-500)',
+  } as React.CSSProperties,
+  // Sort triggers live in a real <button> inside the <th>: a bare onClick on a
+  // <th> is unreachable by keyboard and exposes no role. The button is styled
+  // flat so the header looks exactly as before.
+  // NOT `all: unset`: that also resets `outline-style` to `none`, and the
+  // author declaration beats the UA :focus-visible rule — it would delete the
+  // focus ring on the very controls this change exists to make reachable.
+  // Reset only what needs resetting and leave `outline` alone.
+  thButton: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    margin: 0,
+    display: 'inline-block',
+    font: 'inherit',
+    color: 'inherit',
+    letterSpacing: 'inherit',
+    textTransform: 'inherit' as const,
     cursor: 'pointer',
   } as React.CSSProperties,
   td: {
@@ -136,9 +154,7 @@ const styles = {
     borderBottom: '1px solid var(--theme-elevation-100)',
     verticalAlign: 'middle' as const,
   } as React.CSSProperties,
-  tr: {
-    cursor: 'pointer',
-  } as React.CSSProperties,
+  tr: {} as React.CSSProperties,
   trHover: {
     backgroundColor: 'var(--theme-elevation-50)',
   } as React.CSSProperties,
@@ -180,6 +196,20 @@ const styles = {
     textDecoration: 'none',
     fontWeight: 500,
   } as React.CSSProperties,
+  // Disclosure trigger for a row's issue list. Replaces the former `onClick`
+  // on the <tr>, which no keyboard user could reach and which turned a table
+  // row into an untyped control.
+  expandBtn: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    margin: 0,
+    font: 'inherit',
+    color: 'var(--theme-text)',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
+    cursor: 'pointer',
+  } as React.CSSProperties,
   // Tab styles
   tabs: {
     display: 'flex',
@@ -204,7 +234,18 @@ type SortKey = 'title' | 'score' | 'issueCount' | 'wordCount' | 'lastChecked'
 type SortDir = 'asc' | 'desc'
 type TabId = 'results' | 'dictionary'
 
+/** Tab order, shared by the rendering and the arrow-key handler. */
+const TAB_ORDER: TabId[] = ['results', 'dictionary']
+
 export const SpellCheckDashboard: React.FC = () => {
+  // useId, not hardcoded strings: nothing forbids a host from mounting the
+  // dashboard twice (a custom view plus this one), and duplicate ids would
+  // break the tab/panel association they are there to create.
+  const uid = useId()
+  const tabId = (tab: TabId) => `${uid}-tab-${tab}`
+  const panelId = (tab: TabId) => `${uid}-panel-${tab}`
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({})
+
   const [activeTab, setActiveTab] = useState<TabId>('results')
   const [results, setResults] = useState<StoredResult[]>([])
   const [loading, setLoading] = useState(true)
@@ -786,6 +827,34 @@ export const SpellCheckDashboard: React.FC = () => {
     return sortDir === 'asc' ? ' ↑' : ' ↓'
   }
 
+  /**
+   * Machine-readable counterpart of `sortIndicator`. The ↑ / ↓ glyphs are the
+   * only cue a sighted user gets; `aria-sort` is the only one a screen reader
+   * gets, and it belongs on the <th>, not on the button inside it.
+   */
+  const ariaSort = (key: SortKey): 'ascending' | 'descending' | 'none' =>
+    sortKey !== key ? 'none' : sortDir === 'asc' ? 'ascending' : 'descending'
+
+  /**
+   * Arrow / Home / End navigation inside the tablist. With `role="tab"` the
+   * expected keyboard model is one stop in the tab sequence plus arrow keys —
+   * leaving both buttons individually tabbable would announce a tablist and
+   * then not behave like one.
+   */
+  const handleTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const current = TAB_ORDER.indexOf(activeTab)
+    let nextIndex: number | null = null
+    if (e.key === 'ArrowRight') nextIndex = (current + 1) % TAB_ORDER.length
+    else if (e.key === 'ArrowLeft') nextIndex = (current - 1 + TAB_ORDER.length) % TAB_ORDER.length
+    else if (e.key === 'Home') nextIndex = 0
+    else if (e.key === 'End') nextIndex = TAB_ORDER.length - 1
+    if (nextIndex === null) return
+    e.preventDefault()
+    const next = TAB_ORDER[nextIndex]!
+    setActiveTab(next)
+    tabRefs.current[next]?.focus()
+  }
+
   // Docs with errors (issueCount > 0 and already scanned)
   const docsWithErrors = React.useMemo(() => {
     return filteredMergedDocs.filter((d) => d.issueCount > 0 && d.lastChecked)
@@ -904,10 +973,18 @@ export const SpellCheckDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Tabs */}
-      <div style={styles.tabs}>
+      {/* Tabs — the active one was signalled by colour and weight alone, which
+          is invisible to assistive technology (and to anyone who cannot tell
+          the two greys apart). */}
+      <div style={styles.tabs} role="tablist" aria-label="Sections" onKeyDown={handleTabKeyDown}>
         <button
           type="button"
+          role="tab"
+          id={tabId('results')}
+          aria-selected={activeTab === 'results'}
+          aria-controls={panelId('results')}
+          tabIndex={activeTab === 'results' ? 0 : -1}
+          ref={(el) => { tabRefs.current.results = el }}
           style={styles.tab(activeTab === 'results')}
           onClick={() => setActiveTab('results')}
         >
@@ -915,6 +992,12 @@ export const SpellCheckDashboard: React.FC = () => {
         </button>
         <button
           type="button"
+          role="tab"
+          id={tabId('dictionary')}
+          aria-selected={activeTab === 'dictionary'}
+          aria-controls={panelId('dictionary')}
+          tabIndex={activeTab === 'dictionary' ? 0 : -1}
+          ref={(el) => { tabRefs.current.dictionary = el }}
           style={styles.tab(activeTab === 'dictionary')}
           onClick={() => setActiveTab('dictionary')}
         >
@@ -939,11 +1022,12 @@ export const SpellCheckDashboard: React.FC = () => {
 
       {/* ===== TAB: Results ===== */}
       {activeTab === 'results' && (
-        <>
+        <div role="tabpanel" id={panelId('results')} aria-labelledby={tabId('results')}>
           {/* Filter bar */}
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' as const }}>
             {collections.length > 1 && (
               <select
+                aria-label="Filtrer par collection"
                 value={filterCollection}
                 onChange={(e) => { setFilterCollection(e.target.value); setSelectedIds(new Set()) }}
                 style={{
@@ -1048,27 +1132,38 @@ export const SpellCheckDashboard: React.FC = () => {
                   <th style={{ ...styles.th, width: '36px' }}>
                     <input
                       type="checkbox"
+                      aria-label="Tout sélectionner"
                       checked={selectedIds.size === filteredMergedDocs.length && filteredMergedDocs.length > 0}
                       onChange={handleToggleSelectAll}
                       style={{ cursor: 'pointer' }}
                     />
                   </th>
-                  <th style={styles.th} onClick={() => handleSort('title')}>
-                    Document{sortIndicator('title')}
+                  <th style={styles.th} aria-sort={ariaSort('title')}>
+                    <button type="button" style={styles.thButton} onClick={() => handleSort('title')}>
+                      Document{sortIndicator('title')}
+                    </button>
                   </th>
                   <th style={styles.th}>Collection</th>
-                  <th style={styles.th} onClick={() => handleSort('score')}>
-                    Score{sortIndicator('score')}
+                  <th style={styles.th} aria-sort={ariaSort('score')}>
+                    <button type="button" style={styles.thButton} onClick={() => handleSort('score')}>
+                      Score{sortIndicator('score')}
+                    </button>
                   </th>
-                  <th style={styles.th} onClick={() => handleSort('issueCount')}>
-                    Problèmes{sortIndicator('issueCount')}
+                  <th style={styles.th} aria-sort={ariaSort('issueCount')}>
+                    <button type="button" style={styles.thButton} onClick={() => handleSort('issueCount')}>
+                      Problèmes{sortIndicator('issueCount')}
+                    </button>
                   </th>
-                  <th style={styles.th} onClick={() => handleSort('wordCount')}>
-                    Mots{sortIndicator('wordCount')}
+                  <th style={styles.th} aria-sort={ariaSort('wordCount')}>
+                    <button type="button" style={styles.thButton} onClick={() => handleSort('wordCount')}>
+                      Mots{sortIndicator('wordCount')}
+                    </button>
                   </th>
                   <th style={styles.th}>Lisibilité</th>
-                  <th style={styles.th} onClick={() => handleSort('lastChecked')}>
-                    Vérifié{sortIndicator('lastChecked')}
+                  <th style={styles.th} aria-sort={ariaSort('lastChecked')}>
+                    <button type="button" style={styles.thButton} onClick={() => handleSort('lastChecked')}>
+                      Vérifié{sortIndicator('lastChecked')}
+                    </button>
                   </th>
                 </tr>
               </thead>
@@ -1076,18 +1171,19 @@ export const SpellCheckDashboard: React.FC = () => {
                 {sortedResults.map((r) => {
                   const rowKey = `${r.collection}:${r.docId}`
                   const isSelected = selectedIds.has(rowKey)
+                  const docLabel = r.title || r.slug || r.docId
+                  const hasIssues = Boolean(r.issues && r.issues.length > 0)
                   return (
                     <React.Fragment key={rowKey}>
+                      {/* The row used to carry the onClick that expands the
+                          issue list: unreachable by keyboard, and it turned a
+                          <tr> into an untyped control. The trigger now lives in
+                          the "Problèmes" cell as a real button. */}
                       <tr
                         style={{
                           ...styles.tr,
                           ...(hoveredRow === rowKey ? styles.trHover : {}),
                           ...(isSelected ? { backgroundColor: 'var(--theme-elevation-100)' } : {}),
-                        }}
-                        onClick={() => {
-                          if (r.issues && r.issues.length > 0) {
-                            setExpandedId(expandedId === rowKey ? null : rowKey)
-                          }
                         }}
                         onMouseEnter={() => setHoveredRow(rowKey)}
                         onMouseLeave={() => setHoveredRow(null)}
@@ -1095,9 +1191,9 @@ export const SpellCheckDashboard: React.FC = () => {
                         <td style={styles.td}>
                           <input
                             type="checkbox"
+                            aria-label={`Sélectionner ${docLabel}`}
                             checked={isSelected}
                             onChange={() => toggleSelect(r.docId, r.collection)}
-                            onClick={(e) => e.stopPropagation()}
                             style={{ cursor: 'pointer' }}
                           />
                         </td>
@@ -1105,9 +1201,8 @@ export const SpellCheckDashboard: React.FC = () => {
                           <a
                             href={`/admin/collections/${r.collection}/${r.docId}`}
                             style={styles.link}
-                            onClick={(e) => e.stopPropagation()}
                           >
-                            {r.title || r.slug || r.docId}
+                            {docLabel}
                           </a>
                         </td>
                         <td style={styles.td}>{r.collection}</td>
@@ -1118,7 +1213,21 @@ export const SpellCheckDashboard: React.FC = () => {
                             <span style={{ fontSize: '11px', color: 'var(--theme-elevation-400)' }}>—</span>
                           )}
                         </td>
-                        <td style={styles.td}>{r.lastChecked ? r.issueCount : '—'}</td>
+                        <td style={styles.td}>
+                          {r.lastChecked && hasIssues ? (
+                            <button
+                              type="button"
+                              style={styles.expandBtn}
+                              aria-expanded={expandedId === rowKey}
+                              aria-label={`${r.issueCount} problème(s) — ${docLabel}`}
+                              onClick={() => setExpandedId(expandedId === rowKey ? null : rowKey)}
+                            >
+                              {r.issueCount}
+                            </button>
+                          ) : (
+                            r.lastChecked ? r.issueCount : '—'
+                          )}
+                        </td>
                         <td style={styles.td}>{r.wordCount || '—'}</td>
                         <td style={styles.td}>
                           {r.readability ? (
@@ -1167,16 +1276,17 @@ export const SpellCheckDashboard: React.FC = () => {
               </tbody>
             </table>
           )}
-        </>
+        </div>
       )}
 
       {/* ===== TAB: Dictionary ===== */}
       {activeTab === 'dictionary' && (
-        <>
+        <div role="tabpanel" id={panelId('dictionary')} aria-labelledby={tabId('dictionary')}>
           {/* Add word input */}
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center' }}>
             <input
               type="text"
+              aria-label="Ajouter un mot au dictionnaire"
               value={dictInput}
               onChange={(e) => setDictInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleDictAdd() }}
@@ -1210,6 +1320,7 @@ export const SpellCheckDashboard: React.FC = () => {
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap' as const }}>
             <input
               type="text"
+              aria-label="Rechercher un mot du dictionnaire"
               value={dictSearch}
               onChange={(e) => setDictSearch(e.target.value)}
               placeholder="Rechercher..."
@@ -1283,6 +1394,7 @@ export const SpellCheckDashboard: React.FC = () => {
                 Un mot par ligne, ou séparés par des virgules :
               </div>
               <textarea
+                aria-label="Mots à importer, un par ligne ou séparés par des virgules"
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 rows={6}
@@ -1331,6 +1443,7 @@ export const SpellCheckDashboard: React.FC = () => {
                   <th style={{ ...styles.th, width: '36px', cursor: 'default' }}>
                     <input
                       type="checkbox"
+                      aria-label="Tout sélectionner"
                       checked={dictSelectedIds.size === filteredDictWords.length && filteredDictWords.length > 0}
                       onChange={handleDictToggleSelectAll}
                       style={{ cursor: 'pointer' }}
@@ -1358,6 +1471,7 @@ export const SpellCheckDashboard: React.FC = () => {
                       <td style={styles.td}>
                         <input
                           type="checkbox"
+                          aria-label={`Sélectionner ${w.word}`}
                           checked={isSelected}
                           onChange={() => {
                             setDictSelectedIds((prev) => {
@@ -1397,6 +1511,7 @@ export const SpellCheckDashboard: React.FC = () => {
                             fontSize: '14px',
                             padding: '2px 6px',
                           }}
+                          aria-label={`Supprimer ${w.word}`}
                           title="Supprimer"
                         >
                           ✕
@@ -1408,7 +1523,7 @@ export const SpellCheckDashboard: React.FC = () => {
               </tbody>
             </table>
           )}
-        </>
+        </div>
       )}
     </div>
   )

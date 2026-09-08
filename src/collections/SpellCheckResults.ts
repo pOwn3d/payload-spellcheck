@@ -100,6 +100,22 @@ export function createSpellCheckResultsCollection(
           description: 'JSON array of SpellCheckIssue objects',
         },
       },
+      // `ignoredIssues` is written by the admin UI with a plain REST PATCH on
+      // this collection (SpellCheckDashboard.handleIgnore, SpellCheckField), not
+      // through a plugin endpoint. That was reviewed and deliberately left as
+      // is: since 0.15.0 `access.update` here is the SAME `guard.isAllowed`
+      // the endpoints run, and since 0.16.0 that guard also requires the caller
+      // to have authenticated against `config.admin.user`. So the set of
+      // accounts able to PATCH this row is exactly the set able to call a
+      // dedicated endpoint — routing the write through one would move code
+      // without narrowing anything.
+      //
+      // What a dedicated endpoint WOULD add is field-level narrowing: a PATCH
+      // can also rewrite `issues`, which `/fix-all` later applies to published
+      // documents with `overrideAccess: true`. But `/fix-all` is open to that
+      // same set of accounts anyway, so the actor set is unchanged — it is a
+      // defence-in-depth refactor, not a fix. Re-open it only if the guard on
+      // this collection is ever loosened relative to the endpoints'.
       {
         name: 'ignoredIssues',
         type: 'json',

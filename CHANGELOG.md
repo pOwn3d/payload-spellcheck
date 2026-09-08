@@ -5,6 +5,176 @@ All notable changes to `@consilioweb/payload-spellcheck` will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-09-08 — Ten controls with no name, and a badge that could blank a list view
+
+Accessibility, resilience and documentation release. **Nothing here is a security fix** — 0.17.0
+closed the last open item and no new hole was found. Take it if your admin panel answers to the
+EAA / RGAA, if you run anything other than SQLite, or if you are about to migrate or uninstall.
+Otherwise it can ride along with your next routine bump.
+
+### Fixed
+
+- **Ten form controls had no accessible name at all.** Every `<input>`, `<select>` and
+  `<textarea>` the plugin renders — the collection filter, the two "select all" checkboxes, the
+  per-row selection checkboxes in both tables, the dictionary add and search fields, the import
+  `<textarea>`, and in `IssueCard` the replacement `<select>` and the manual-correction input —
+  reached the accessibility tree as an unlabelled control. A screen reader announced "edit text,
+  blank". None of them had a `<label>` to point at, so each is named with `aria-label`, reusing the
+  visible wording where one existed (`IssueCard`'s replacement `<select>` takes the same
+  "Suggestion" string as the `<span>` above it rather than inventing a second one) and naming the
+  row it belongs to where it did not (`Sélectionner ${title}`, `Supprimer ${word}`). The
+  dictionary's `✕` delete button, whose name was the glyph plus a `title`, now says which word it
+  deletes.
+- **Five sortable column headers were `<th onClick>`.** No role, no keyboard access, and no
+  machine-readable sort state — the `↑` / `↓` glyph was the only cue, and only for people who can
+  see it. The handler moved into a real `<button type="button">` inside the header, styled flat so
+  the table looks unchanged, and the `<th>` carries `aria-sort`. Collection and Lisibilité are not
+  sortable and deliberately declare none.
+- **A `<tr onClick>` was the only way to expand a document's issues.** A table row is not a
+  control; no keyboard user could reach it, and the two `stopPropagation()` calls that kept the row
+  checkbox and the document link usable existed only to defuse it. The trigger is now a button in
+  the "Problèmes" cell carrying `aria-expanded`, and the row went back to being a row — the
+  tempting wrong fix, `<tr role="button" tabIndex={0}>`, would have severed the cells from their
+  headers, and a test now refuses it.
+- **The dashboard's two tabs signalled the selected one with colour and font weight only.** They
+  now implement the ARIA tabs pattern in full: `role="tablist"`, `role="tab"` with `aria-selected`
+  and `aria-controls`, `role="tabpanel"` regions with `aria-labelledby` (the panels were bare
+  fragments), roving `tabIndex` so the tablist is one stop in the tab sequence, and Arrow / Home /
+  End moving between tabs. Ids come from `useId()`, not from string literals — nothing stops a host
+  from mounting the dashboard twice, and duplicate ids would break the very association these
+  attributes create.
+- **The focus ring is now pinned, not just intact.** The new flat button styles reset `background`,
+  `border`, `padding` and `font` individually rather than with `all: unset`, which also resets
+  `outline-style` to `none` as an author declaration and outranks the UA `:focus-visible` rule —
+  it would have deleted the focus indicator on the exact controls this release exists to make
+  reachable. Five tests, one per component source, fail on any `outline: 'none'` or `all: 'unset'`.
+
+### Added
+
+- **`AdminErrorBoundary` (`src/components/ErrorBoundary.tsx`), around all three of the plugin's
+  mount points.** Payload mounts `Field`, `Cell` and view components straight from the import map,
+  so the plugin has no ancestor of its own in the host's tree: an uncaught render error propagates
+  to Payload's root and unmounts the whole screen. The radius, per mount point:
+  - `SpellCheckScoreCell` renders **once per row of the list view of collections the plugin only
+    decorates**. One malformed stored result took the host's entire listing down — their content
+    unreachable because of a spellcheck badge. Wrapped with `fallback={null}`, so a failed badge
+    looks like a missing badge instead of an error panel repeated on every row, and `resetKeys` on
+    `[rowData.id, collectionSlug]` so a cell that failed for one document recovers when the table
+    is sorted, filtered or paged onto another.
+  - `SpellCheckField` renders in the **sidebar of every document of every scanned collection**. A
+    throw unmounted the edit screen and locked the editor out of a document the plugin merely
+    annotates. Also `fallback={null}`.
+  - `SpellCheckView` is the full-page dashboard, and there a **visible** panel is the right call:
+    degrading silently would leave an admin staring at an empty screen unable to tell a crash from
+    an empty dictionary. `DefaultTemplate` — nav, breadcrumbs, logout — keeps working around it.
+- **Why the view is wrapped from the inside, and why no `try/catch` was added on the server.**
+  `SpellCheckView` is a server component that Payload mounts itself; nothing the plugin controls
+  can wrap it from outside, and a client class cannot enclose a server component's body. So the
+  boundary sits inside the view, around its client child, and is imported through
+  `@consilioweb/payload-spellcheck/client` — already in tsup's `external` list — which is what
+  keeps the class on the client side of the RSC split; a relative import would inline a stateful
+  component with lifecycle methods into the server bundle. Its server body was left unguarded on
+  purpose: what runs there is the auth check and two `redirect()` calls, and `redirect` works *by
+  throwing*, so a `try/catch` around it would swallow the redirect it is meant to protect.
+- **What the boundary does not catch, stated rather than assumed.** React boundaries catch errors
+  thrown during render, in lifecycle methods and in constructors — not rejected promises inside
+  `useEffect`, not errors from event handlers. The `fetch` calls in these components keep their own
+  `catch`, which they already had.
+- **The boundary itself is hardened past the version first shipped in `payload-support`**, and each
+  difference is a test: `resetKeys` (an error used to latch until the page was reloaded, even once
+  the offending document was gone), `fallback={null}` honoured with `!== undefined` rather than a
+  truthiness check (a truthy test sends the list-view cell to the default red panel, once per row),
+  the caught error deliberately kept out of state so nothing on screen can quote it — Payload
+  messages routinely carry document titles, slugs and SQL fragments, and this panel can render in a
+  list view a lower-privileged editor can open — and Retry remounting the subtree via a `key`
+  instead of re-rendering the tree that just threw. Plus `role="alert"`, `--theme-*` tokens so the
+  panel follows the host's theme, and its three strings in the plugin's own i18n.
+- **55 tests, taking the suite from 85 to 140.**
+  - `src/__tests__/accessibility.test.ts` — 26 tests, asserted on the component sources. This
+    package declares `dependencies: {}` and tests in a `node` environment; pulling in jsdom and a
+    testing library to check markup would trade a zero-dependency plugin for a lint a parser does
+    just as well, and every fact checked is syntactic. They also count the controls, so the suite
+    cannot go green by deleting them.
+  - `src/__tests__/errorBoundary.test.ts` — 15 tests, exercising the real class through
+    `getDerivedStateFromError`, `render()`, `componentDidUpdate` and the exported
+    `resetKeysChanged` predicate. No renderer, no DOM. Each one fails against the earlier boundary.
+  - `endpoints.test.ts` — 8 tests pinning that the `access` on `spellcheck-results` and
+    `spellcheck-dictionary` grants exactly what `/spellcheck/validate` grants, across four callers
+    (an admin of the admin collection, a non-admin, an *"admin" of a second auth collection* —
+    the escalation 0.16.0 closed — and an anonymous one) and all four operations. The dashboard
+    persists "ignore this issue" with a plain REST `PATCH` on the collection rather than through an
+    endpoint; that is only defensible while the two gates are the same one, and these tests break
+    if anyone loosens the collection.
+  - `hardening.test.ts` — 6 tests pinning what `autoFixSchema` actually does per shape of database
+    client: logs only against a libsql-shaped client, executes only against one exposing a
+    synchronous `exec()`, swallows a duplicate-column error instead of warning on every boot, never
+    fires the DDL on an unrelated failure (a refused Postgres connection), and, when opted out,
+    installs no `onInit` at all while leaving the LanguageTool disclosure in place.
+
+### Changed
+
+- **Expanding a document's issues is now a click on the issue count, not anywhere on the row.**
+  The rows lost their `cursor: pointer` accordingly. The count stays plain text for a document with
+  no issues or one never checked. This is the one visible change in how the dashboard is used.
+- **`SpellCheckField` and `SpellCheckScoreCell` now export the wrapped components.** Same props,
+  same default export, same import paths — a consumer importing either sees no difference beyond
+  the containment.
+- **`@consilioweb/payload-spellcheck/client` gains `AdminErrorBoundary` and the
+  `AdminErrorBoundaryProps` type**, and the component is added to the `bundle: false` entry list in
+  `tsup.config.ts` — an entry missing there leaves a dangling `./ErrorBoundary.js` import in every
+  component that wraps itself in it.
+- **`SpellcheckTranslations` gains `errorBoundaryTitle`, `errorBoundaryHint` and
+  `errorBoundaryRetry`, all optional.** Optional on purpose: a consumer who hand-builds the object
+  against an earlier version still type-checks. Both shipped locales define them and the panel
+  falls back to French if they are absent.
+- **The README's description of `autoFixSchema` was wrong, and no code changed to make it right.**
+  It promised the plugin "adds the missing `payload_locked_documents_rels` column automatically on
+  SQLite". It does not, on any adapter in the supported peer range: executing the statement needs a
+  raw client with a *synchronous* `exec()`, and `@payloadcms/db-sqlite` builds its client with
+  `createClient` from `@libsql/client`, whose surface is `execute()` / `executeMultiple()`.
+  PostgreSQL and MongoDB expose neither. On every supported setup the option **probes and logs**;
+  the `exec()` branch survives only for a host wiring its own better-sqlite3-shaped client. It was
+  deliberately not promoted to `execute()`: that would turn an inert probe into a plugin writing
+  DDL to a table of Payload's *core*, outside the `payload-migrations` ledger, on every boot
+  including production — `onInit` is not gated on `NODE_ENV` — after which a later `payload migrate`
+  adding the same column fails on it. The trade-off belongs to the host, so the statement is logged
+  for an operator to run knowingly. `autoFixSchema: false` skips the probe, and with it the
+  `onInit` hook entirely.
+- **New README section, "Database and upgrades".** The plugin adds collections to your config; it
+  does not own your schema, and **Payload gives a plugin no way to ship migrations** —
+  `payload migrate` reads one directory, the host's `payload.db.migrationDir`, resolved in the
+  host's own cwd, so a migration file published inside an npm package is never discovered. Hence:
+  `push` in development, `migrate:create` + `migrate` in production, never `push` there. No option
+  of this plugin toggles the schema — `spellcheck-results` and `spellcheck-dictionary` appear as
+  soon as the plugin is in `plugins`, whatever the options, and everything it injects into *your*
+  collections (`_spellcheck`, `_spellcheckScore`) is `type: 'ui'` and creates no column, so growing
+  the `collections` list never produces a migration either.
+- **New README section, "Upgrading",** with the schema answer for 0.15.x → 0.16.0 → 0.17.0: **no
+  schema change in either**, verified by diffing `src/collections` between `v0.15.0` and `HEAD` —
+  the only change to either collection is the *type of the parameter* the access guard takes. Every
+  release from here on states whether it moves the schema.
+- **`npx spellcheck-uninstall` drops the tables on SQLite only — the README now says so.** The
+  script looks for `*.db` files in the project root and in `data/`, then shells out to the `sqlite3`
+  binary; on PostgreSQL and MongoDB it finds no such file, reports nothing, and leaves both tables
+  in place. Source and dependency cleanup still runs correctly — only the data stays behind. The
+  manual block is now split per adapter, PostgreSQL (`DROP … CASCADE`, plus the optional
+  `payload_locked_documents_rels` columns) and MongoDB (`mongosh`, collections rather than tables),
+  and all three now also clear the rows Payload's lock table keeps for the dropped documents, which
+  the previous instructions left orphaned.
+- **The dictionary's scope is documented, including where it does not fit.** `word` is
+  `unique: true` across the whole Payload instance, so the dictionary is shared by every collection
+  and every site that instance serves — which follows the one-instance-one-site model these plugins
+  assume, but makes the plugin unusable per-tenant alongside `@payloadcms/plugin-multi-tenant`: two
+  tenants cannot hold the same word with different intents, and the second insert fails on the
+  unique index.
+- **`SpellCheckResults.ts` records why the dashboard's "ignore" write is a plain REST `PATCH`** and
+  not a dedicated endpoint: since 0.15.0 the collection's `access.update` *is* the endpoints'
+  guard, and since 0.16.0 that guard also requires the caller to have authenticated against
+  `config.admin.user`, so routing the write through an endpoint would move code without narrowing
+  the set of accounts that can perform it. The note names the one thing an endpoint would add —
+  field-level narrowing, since a `PATCH` can also rewrite `issues` — and the condition under which
+  the decision must be re-opened.
+
 ## [0.17.0] - 2026-09-08 — The peer range still let you install a vulnerable Payload
 
 Packaging release: no runtime code changed, `dist` behaves exactly as in 0.16.0. What changed is
@@ -516,6 +686,7 @@ perfect score. Several defaults change: read `### Breaking` before updating.
 - CSV-compatible results
 - TypeScript strict mode, full type exports
 
+[0.18.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.16.0...v0.17.0
 [0.13.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.11.0...v0.13.0
 [0.11.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.10.1...v0.11.0

@@ -48,6 +48,8 @@ Full release history: [CHANGELOG.md](CHANGELOG.md).
 - [Engine](#engine)
 - [API Endpoints](#api-endpoints)
 - [Collections](#collections)
+- [Database and upgrades](#database-and-upgrades)
+- [Upgrading](#upgrading)
 - [Package Exports](#package-exports)
 - [Requirements](#requirements)
 - [Uninstall](#uninstall)
@@ -175,8 +177,11 @@ The plugin then:
 - adds a sidebar field and a score column to every collection listed in `collections`;
 - registers the dashboard view at `/admin/spellcheck` (Results + Dictionary tabs);
 - adds an `afterChange` hook that re-checks a document on save;
-- on init, adds the `spellcheck_dictionary_id` column that Payload's `push: true` omits from
-  `payload_locked_documents_rels` (SQLite; on other adapters it logs the `ALTER TABLE` to run).
+- on init, checks that `spellcheck-dictionary` is queryable and, if the
+  `payload_locked_documents_rels.spellcheck_dictionary_id` column is missing, logs the `ALTER TABLE`
+  that adds it (see [Database and upgrades](#database-and-upgrades) — it only runs the statement
+  itself on a database client that exposes a synchronous `exec()`, which `@payloadcms/db-sqlite`
+  does not).
 
 ## Configuration
 
@@ -247,7 +252,7 @@ spellcheckPlugin({
 | `customDictionary` | `string[]` | `[]` | Words never flagged, merged with the DB dictionary |
 | `languageToolUrl` | `string` | `'https://api.languagetool.org/v2/check'` | LanguageTool endpoint — set it for a self-hosted instance |
 | `warningThreshold` | `number` | `80` | **Accepted but currently unread.** The score colours in the UI are hard-coded (green ≥ 95, amber ≥ 80, red below) |
-| `autoFixSchema` | `boolean` | `true` | Add the missing `payload_locked_documents_rels` column on init |
+| `autoFixSchema` | `boolean` | `true` | On init, probe `spellcheck-dictionary` and report the missing `payload_locked_documents_rels` column. See [Database and upgrades](#database-and-upgrades) before leaving it on |
 | `maxDocs` | `number` | — | Cap the number of documents a single bulk scan processes. Unset = no cap |
 | `acknowledgePublicApi` | `boolean` | `false` | Silence the start-up warning about sending content to the public LanguageTool API (see [Data sent to third parties](#data-sent-to-third-parties)) |
 | `access` | `(req) => boolean` | admin only | Gates the endpoints, the dashboard view and both plugin collections. The whole request is the argument |
@@ -641,6 +646,91 @@ or fixes.
 **`spellcheck-dictionary` fields** — `word` (text, unique, indexed, max 100, lower-cased on save),
 `addedBy` (relationship to `users`).
 
+**Scope** — `word` is `unique: true` at the level of the whole Payload instance. The dictionary is
+therefore shared by every collection and every site served by that instance: adding `Dupont` once
+silences it everywhere. That follows the model these plugins assume — one Payload instance = one
+site — but it means the plugin is not usable per-tenant alongside
+`@payloadcms/plugin-multi-tenant`: two tenants cannot hold the same word with different intents,
+and the second insert fails on the unique index.
+
+## Database and upgrades
+
+- This plugin **adds collections to your Payload config**; it does not own your schema. The tables
+  belong to your app, and so does the responsibility for migrating them.
+- **Payload gives a plugin no way to ship migrations.** `payload migrate` reads a single directory,
+  the host app's (`payload.db.migrationDir`, resolved in the app's own cwd). A migration file
+  published inside an npm package is never discovered.
+- **In development**, `push` synchronises the schema automatically when the plugin's collections
+  appear for the first time.
+- **In production**, run `payload migrate:create` then `payload migrate`. Never `push`: Payload
+  skips it as soon as `NODE_ENV=production`, and mixing it with migrations triggers a data-loss
+  warning.
+- **No option of this plugin toggles the schema.** The two tables it creates —
+  `spellcheck-results`, `spellcheck-dictionary` — appear as soon as the plugin is in `plugins`,
+  whatever the options. Everything it injects into *your* collections (`_spellcheck`,
+  `_spellcheckScore`, gated by `addSidebarField` and `addListColumn`) is `type: 'ui'` and creates no
+  column, so growing the `collections` list never produces a migration either.
+- **Every release of this plugin states in its [Upgrading](#upgrading) section whether it changes
+  the schema.** None has since 0.15.0.
+
+### `autoFixSchema`, and why it is not a migration
+
+`autoFixSchema` (default `true`) queries `spellcheck-dictionary` once at boot. If that query fails
+with a missing-column error, the plugin reports:
+
+```
+ALTER TABLE payload_locked_documents_rels ADD COLUMN spellcheck_dictionary_id integer
+```
+
+Two things to know before leaving it enabled:
+
+1. **It is a raw DDL statement on a Payload CORE table, outside the `payload-migrations` ledger.**
+   If it ever does run, your database gains a column no migration created. A later `payload migrate`
+   that tries to add the same column will fail on it, and the next `migrate:create` will be
+   generated against a schema snapshot that does not match the database.
+2. **On the adapters in the supported peer range it does not run — it only logs.** Executing the
+   statement requires a database client exposing a synchronous `exec()`.
+   `@payloadcms/db-sqlite` builds its client with `createClient` from `@libsql/client`, whose API is
+   `execute()` / `executeMultiple()`; PostgreSQL and MongoDB expose neither. In practice the plugin
+   prints the statement and leaves the decision to you — which is the intended behaviour.
+
+Set `autoFixSchema: false` to skip the probe entirely. When it is the only reason the plugin
+installs an `onInit` hook, opting out removes the hook altogether.
+
+## Upgrading
+
+### 0.15.x → 0.16.0 → 0.17.0
+
+**No schema change. No migration to generate**, in either release.
+
+Verified by diffing `src/collections` between `v0.15.0` and `HEAD`: the only change to either
+collection is the *type of the parameter* the access guard takes. No field was added, removed,
+renamed or retyped; no index or `unique` flag moved. An access change is not a schema change.
+
+**0.15.x → 0.16.0 — behaviour change, no data change.** The guard now also compares
+`req.user.collection` with the collection backing the admin panel (`config.admin.user`), and it
+does so *before* your own `access` function runs. An account that authenticated against a second
+auth collection — customers, members, partners — is refused even when your `access` returns `true`
+for it. If a non-admin auth collection was reaching the spellcheck endpoints or the two plugin
+collections, it stops. That is the point of the release. See [Quick Start](#quick-start) for the
+`access` shape to ship.
+
+**0.16.x → 0.17.0 — packaging only.** The three Payload peers move from `^3.0.0` to `^3.79.1`.
+No runtime code changed. Check the version you actually resolve, not the one you declare:
+`npm ls payload` / `pnpm why payload`. Anything below `3.79.1` needs a Payload upgrade — bumping
+this plugin alone changes nothing about the core already on disk.
+
+Worth knowing while you are there:
+
+- **The fields the plugin injects into your own collections are `type: 'ui'`.** `_spellcheck` (the
+  sidebar panel) and `_spellcheckScore` (the list column) are presentation-only: they create **no
+  column, in any adapter**. Adding a collection to the `collections` option therefore never requires
+  a migration. If `payload migrate:create` produces a file right after you added one, the change
+  came from somewhere else in your config.
+- The two collections the plugin *does* create — `spellcheck-results` and `spellcheck-dictionary` —
+  are real tables. They appear the first time the plugin is installed, and that first install is the
+  only moment this plugin has ever needed a migration.
+
 ## Package Exports
 
 | Subpath | Exposes | Environment |
@@ -709,8 +799,9 @@ import { SpellCheckView } from '@consilioweb/payload-spellcheck/views'
   gained in `3.44`)
 - **React** — `^18.0.0 || ^19.0.0`, optional peer, needed by the admin UI
 - **Next.js** — 15, or 16 with the Turbopack workaround at the top of this file
-- **Database** — any Payload adapter. `autoFixSchema` only patches SQLite automatically; on other
-  adapters it logs the `ALTER TABLE` statement to run.
+- **Database** — any Payload adapter. `autoFixSchema` writes nothing on `@payloadcms/db-sqlite`,
+  PostgreSQL or MongoDB: it logs the `ALTER TABLE` for you to run. See
+  [Database and upgrades](#database-and-upgrades).
 
 ## Uninstall
 
@@ -720,19 +811,26 @@ import { SpellCheckView } from '@consilioweb/payload-spellcheck/views'
 npx spellcheck-uninstall
 ```
 
-It removes the plugin's imports and calls from your source files, drops the plugin tables and
-indexes, removes the dependency, and regenerates the import map.
+It removes the plugin's imports and calls from your source files, removes the dependency,
+regenerates the import map — and, **on SQLite only**, drops the plugin tables and indexes.
 
 - `--keep-data` — keep the database tables.
 - `--force-db` — drop the tables even when the plugin is not detected in the project. The database
   step is the only irreversible one, so by default it runs only when the plugin is actually found
   (a cleaned source file, or the dependency declared in `package.json`).
 
+> **The database step is SQLite-only, and it fails quietly elsewhere.** The script looks for `*.db`
+> files in the project root and in `data/`, then shells out to the `sqlite3` binary. On PostgreSQL
+> and on MongoDB it finds no such file, reports nothing, and leaves both tables in place. The source
+> and dependency cleanup still runs correctly — only the data is left behind. Use the manual
+> statements below on those adapters.
+
 ### Manual
 
 1. Remove the plugin from your config.
 2. Run `npx payload generate:importmap`.
-3. Optionally drop the tables:
+3. Optionally drop the tables. **Pick the block for your adapter** — the automatic script only ever
+   covers the first one:
 
 ```sql
 -- SQLite
@@ -742,7 +840,38 @@ DROP INDEX IF EXISTS `spellcheck_results_last_checked_idx`;
 DROP INDEX IF EXISTS `spellcheck_dictionary_word_idx`;
 DROP TABLE IF EXISTS `spellcheck_results`;
 DROP TABLE IF EXISTS `spellcheck_dictionary`;
+
+-- Also clear the rows the lock table keeps for those documents:
+DELETE FROM `payload_locked_documents_rels` WHERE `spellcheck_results_id` IS NOT NULL;
+DELETE FROM `payload_locked_documents_rels` WHERE `spellcheck_dictionary_id` IS NOT NULL;
 ```
+
+```sql
+-- PostgreSQL
+-- Indexes go with the tables, so a single CASCADE is enough.
+DELETE FROM payload_locked_documents_rels WHERE spellcheck_results_id IS NOT NULL;
+DELETE FROM payload_locked_documents_rels WHERE spellcheck_dictionary_id IS NOT NULL;
+DROP TABLE IF EXISTS spellcheck_results CASCADE;
+DROP TABLE IF EXISTS spellcheck_dictionary CASCADE;
+
+-- Optional, and only if you are NOT going to reinstall the plugin: the two
+-- foreign-key columns Payload added to its lock table.
+ALTER TABLE payload_locked_documents_rels DROP COLUMN IF EXISTS spellcheck_results_id;
+ALTER TABLE payload_locked_documents_rels DROP COLUMN IF EXISTS spellcheck_dictionary_id;
+```
+
+```js
+// MongoDB (mongosh) — collections, not tables, and no lock-table columns to clean.
+db.getCollection('spellcheck-results').drop()
+db.getCollection('spellcheck-dictionary').drop()
+db.getCollection('payload-locked-documents').deleteMany({
+  'document.relationTo': { $in: ['spellcheck-results', 'spellcheck-dictionary'] },
+})
+```
+
+The slugs `spellcheck-results` and `spellcheck-dictionary` are fixed — the plugin exposes no option
+to rename them — so the names above are always the right ones. What the plugin adds to **your** own
+collections (`_spellcheck`, `_spellcheckScore`) is `type: 'ui'` and has no column to drop.
 
 ## Migration from `@consilioweb/spellcheck`
 

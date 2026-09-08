@@ -229,6 +229,10 @@ export const IssueCard: React.FC<IssueCardProps> = ({
           <span style={styles.suggestionLabel}>{t?.suggestion ?? 'Suggestion'} :</span>
           {issue.replacements.length > 1 ? (
             <select
+              // No <label> exists in this card — the visible label is the
+              // sibling <span> above. Name the control with the same string
+              // rather than inventing a second wording.
+              aria-label={t?.suggestion ?? 'Suggestion'}
               value={selectedReplacement}
               onChange={(e) => setSelectedReplacement(Number(e.target.value))}
               style={{
@@ -259,6 +263,9 @@ export const IssueCard: React.FC<IssueCardProps> = ({
           </div>
           <input
             type="text"
+            // `placeholder` here is the misspelled word itself — an example,
+            // not a name — so it cannot serve as the accessible name.
+            aria-label={t?.manualCorrection ?? 'Correction manuelle :'}
             value={manualValue}
             onChange={(e) => setManualValue(e.target.value)}
             placeholder={issue.original}

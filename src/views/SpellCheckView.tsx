@@ -10,6 +10,13 @@ import React from 'react'
 // @ts-ignore — next is a peer dependency
 import { redirect } from 'next/navigation'
 import { SpellCheckViewClient } from './SpellCheckViewClient.js'
+// Imported through the package's own client subpath, NOT via a relative path.
+// tsup bundles this entry, and `@consilioweb/payload-spellcheck/client` is in
+// its `external` list: going through the subpath is what keeps the boundary
+// class on the client side of the RSC split. A relative import would inline the
+// class — a stateful component with lifecycle methods — into the server bundle.
+// @ts-ignore — self-reference via package exports
+import { AdminErrorBoundary } from '@consilioweb/payload-spellcheck/client'
 
 export const SpellCheckView: React.FC<AdminViewServerProps> = (props) => {
   const { initPageResult } = props
@@ -40,7 +47,16 @@ export const SpellCheckView: React.FC<AdminViewServerProps> = (props) => {
       user={req.user!}
       visibleEntities={visibleEntities}
     >
-      <SpellCheckViewClient />
+      {/*
+        Full-page view: here a VISIBLE fallback is the right call. The dashboard
+        is the whole content of the screen, so degrading silently would leave the
+        admin staring at an empty page with no way to tell a crash from an empty
+        dictionary. The surrounding DefaultTemplate — nav, breadcrumbs, logout —
+        keeps working.
+      */}
+      <AdminErrorBoundary viewName="SpellCheckView">
+        <SpellCheckViewClient />
+      </AdminErrorBoundary>
     </DefaultTemplate>
   )
 }

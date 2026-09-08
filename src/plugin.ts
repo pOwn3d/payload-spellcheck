@@ -32,12 +32,34 @@ import { createAccessGuard } from './endpoints/access.js'
 import { createAfterChangeCheckHook } from './hooks/afterChangeCheck.js'
 
 /**
- * Auto-fix schema issues caused by Payload's `push:true` not adding
- * foreign key columns to `payload_locked_documents_rels` for new collections.
- * Runs once on init — detects missing columns and adds them automatically.
+ * Probe the dictionary collection at boot and report the
+ * `payload_locked_documents_rels.spellcheck_dictionary_id` column when it is
+ * missing. Enabled by default (`autoFixSchema`), opt out with `false`.
  *
- * Works with SQLite (better-sqlite3) via raw client. For Postgres, logs
- * a warning with the manual ALTER TABLE command.
+ * WHAT THIS ACTUALLY DOES, verified rather than assumed — the docblock this
+ * replaced claimed it "adds the column automatically", and the README said the
+ * same:
+ *
+ *  - Executing the statement needs a raw client with a SYNCHRONOUS `exec()`.
+ *    `@payloadcms/db-sqlite` (the supported peer floor is ^3.79.1) builds its
+ *    client with `createClient` from `@libsql/client`, whose surface is
+ *    `execute()` / `executeMultiple()`. `db.pool` does not exist there, and
+ *    `db.drizzle.session.client` is that same libsql client. So on every
+ *    adapter in the supported range this function LOGS the statement and
+ *    changes nothing. PostgreSQL and MongoDB expose no `exec()` either.
+ *  - The `exec()` branch is therefore reachable only from a host wiring its own
+ *    better-sqlite3-shaped client. It is kept because it is the only path that
+ *    ever repaired anything, and removing it would silently change behaviour
+ *    for such a host.
+ *
+ * WHY IT IS NOT PROMOTED TO `execute()`. Doing so would turn an inert probe
+ * into a plugin that writes DDL to a table of Payload's CORE, outside the
+ * `payload-migrations` ledger, on every boot INCLUDING production (onInit is
+ * not gated on NODE_ENV). The database would then hold a column no migration
+ * created, and a later `payload migrate` adding the same column fails on it.
+ * That trade-off belongs to the host, not to the plugin: the statement is
+ * logged so an operator can run it — or generate a migration for it — knowingly.
+ * Documented under "Database and upgrades" in the README.
  */
 async function autoFixSchema(payload: any): Promise<void> {
   try {

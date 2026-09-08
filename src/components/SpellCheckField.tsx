@@ -17,6 +17,7 @@ import { IssueCard } from './IssueCard.js'
 import type { SpellCheckIssue, SpellCheckResult } from '../types.js'
 import type { ReadabilityResult } from '../engine/readability.js'
 import { useSpellcheckI18n } from './useSpellcheckI18n.js'
+import { AdminErrorBoundary } from './ErrorBoundary.js'
 
 const styles = {
   container: {
@@ -134,7 +135,7 @@ const styles = {
   } as React.CSSProperties,
 }
 
-export const SpellCheckField: React.FC = () => {
+const SpellCheckFieldInner: React.FC = () => {
   const { id, collectionSlug } = useDocumentInfo()
   const t = useSpellcheckI18n()
   const [result, setResult] = useState<SpellCheckResult | null>(null)
@@ -368,5 +369,20 @@ export const SpellCheckField: React.FC = () => {
     </div>
   )
 }
+
+/**
+ * Mounted by Payload in the sidebar of every document of every targeted
+ * collection, straight from the import map — so, like the list Cell, it has no
+ * ancestor the plugin controls. A throw here would unmount the whole edit
+ * screen and lock the editor out of a document the plugin merely annotates.
+ *
+ * `fallback={null}`: losing the spellcheck panel must not put an error block in
+ * the middle of the sidebar of every document.
+ */
+export const SpellCheckField: React.FC = () => (
+  <AdminErrorBoundary viewName="SpellCheckField" fallback={null}>
+    <SpellCheckFieldInner />
+  </AdminErrorBoundary>
+)
 
 export default SpellCheckField

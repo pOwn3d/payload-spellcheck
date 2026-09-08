@@ -38,6 +38,10 @@ export default defineConfig([
       'src/components/SpellCheckDashboard.tsx',
       'src/components/IssueCard.tsx',
       'src/components/SpellCheckScoreCell.tsx',
+      // Emitted individually like the others: this build is `bundle: false`, so
+      // an entry missing here leaves a dangling `./ErrorBoundary.js` import in
+      // every component that wraps itself in the boundary.
+      'src/components/ErrorBoundary.tsx',
       'src/components/useSpellcheckI18n.ts',
       // Utility modules imported by components (must be emitted for bundle:false)
       'src/i18n.ts',
