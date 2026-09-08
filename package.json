@@ -113,6 +113,6 @@
     "@types/react": "^19.2.18",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.9"
+    "vitest": "^3.2.7"
   }
 }
