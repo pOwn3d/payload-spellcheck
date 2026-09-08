@@ -1,6 +1,6 @@
 {
   "name": "@consilioweb/payload-spellcheck",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "packageManager": "pnpm@11.25.0",
   "description": "Payload CMS spellcheck plugin — LanguageTool + Claude AI fallback, dashboard, sidebar field, auto-check on save",
   "type": "module",
@@ -90,9 +90,9 @@
   "author": "ConsilioWEB <contact@consilioweb.fr> (https://consilioweb.fr)",
   "license": "MIT",
   "peerDependencies": {
-    "@payloadcms/next": "^3.0.0",
-    "@payloadcms/ui": "^3.0.0",
-    "payload": "^3.0.0",
+    "@payloadcms/next": "^3.79.1",
+    "@payloadcms/ui": "^3.79.1",
+    "payload": "^3.79.1",
     "react": "^18.0.0 || ^19.0.0"
   },
   "peerDependenciesMeta": {

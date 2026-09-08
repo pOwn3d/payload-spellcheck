@@ -5,6 +5,71 @@ All notable changes to `@consilioweb/payload-spellcheck` will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-09-08 — The peer range still let you install a vulnerable Payload
+
+Packaging release: no runtime code changed, `dist` behaves exactly as in 0.16.0. What changed is
+the floor of the Payload this plugin will install against. Urgency depends on the version you
+actually resolve, not on the one you declare — run `npm ls payload` (or `pnpm why payload`) before
+deciding this can wait.
+
+### Security
+
+- **The declared peer range accepted a Payload carrying a pre-authentication account takeover.**
+  `peerDependencies.payload` was `^3.0.0`, so every 3.x satisfied it — including the releases
+  affected by GHSA-hp5w-3hxx-vmwf (pre-authentication account takeover) and by an SQL injection,
+  both fixed in `3.79.1`. The hole was not in this plugin's code; the plugin is the amplifier. It
+  runs its dashboard on Payload's own `initPageResult` and `DefaultTemplate` and writes documents
+  through the Local API, so on a vulnerable core everything the plugin gates behind an admin
+  account follows that account: the extracted text of every scanned document, drafts included, the
+  dictionary, `/fix` and `/fix-all`. The floor now lives in the peer range, where a package manager
+  refuses it, instead of in a README sentence no CI reads. **Every version ever published carried
+  this range, 0.16.0 included** — that release tightened the plugin's own gates and left the core
+  they stand on unconstrained. What to check on your side: the *resolved* version, not the range.
+  An install created months ago can still be sitting on an early 3.x that this plugin happily
+  accepted. If it is below `3.79.1`, upgrade Payload — updating this plugin alone changes nothing
+  about the core already on disk.
+
+- **The dashboard's own gate did not change, but one wiring is worth re-checking.** Since 0.16.0
+  the view is gated by the same `isAllowed` the endpoints use — the check that compares
+  `req.user.collection` with the admin auth collection — published by the plugin on
+  `config.custom`. That entry only exists when the plugin registers the view. If you wired
+  `SpellCheckView` in by hand, through the `@consilioweb/payload-spellcheck/views` import
+  documented under "Views entry", without the plugin also sitting in your `plugins` array, the
+  entry is absent and the view falls back, deliberately, to its older rule: any authenticated user
+  gets in. Payload exempts custom admin views from `canAccessAdmin`, so nothing behind the view
+  catches that for you. Confirm the plugin is in `plugins` and let it register the view.
+
+### Breaking
+
+- **`payload`, `@payloadcms/next` and `@payloadcms/ui` move from `^3.0.0` to `^3.79.1`.** An
+  install resolving an older 3.x now fails outright on npm 7+ and on pnpm instead of resolving
+  quietly; yarn warns. Installs between `3.44` and `3.79.0` do work at runtime and are exactly the
+  ones this change is meant to lock out. Nothing here uses an API newer than `3.79.1`, so the range
+  is a floor, not a rewrite of what the plugin supports.
+- **The old range was also untrue, independently of the advisory.** The dashboard types itself with
+  `AdminViewServerProps`, exported from `payload` only since `3.2x`, and passes a `req` prop to
+  `DefaultTemplate` that `@payloadcms/next` only gained in `3.44`. A consumer who took `^3.0.0` at
+  its word and installed Payload `3.1` got a plugin that could not render its own view. That
+  mismatch is gone, not fixed — the declared floor now matches what the code actually calls.
+- **`react` is untouched**: still `^18.0.0 || ^19.0.0`, still optional. Raising the Payload floor
+  does not drop React 18.
+
+### Added
+
+- `src/__tests__/packaging.test.ts` — 5 tests, taking the suite from 80 to 85. It reads the shipped
+  `package.json` and asserts that the caret floor of each of the three Payload peers is `>= 3.79.1`
+  and stays on major 3, so widening the range back to `>=3` or `*` fails in CI rather than in the
+  wild; that the `react` peer keeps both majors; and that `pnpm-lock.yaml`'s importers block records
+  the same specifiers as `package.json` — a peer bump committed without re-running `pnpm install`
+  otherwise reaches CI as `ERR_PNPM_OUTDATED_LOCKFILE` on `--frozen-lockfile`.
+
+### Changed
+
+- README states `^3.79.1` in the peer table and in **Requirements**, with the reasoning inline: the
+  advisory floor on one side, the `AdminViewServerProps` / `DefaultTemplate` `req` requirements on
+  the other.
+- `pnpm-lock.yaml` re-recorded against the new specifiers. The versions it resolves are unchanged.
+
 ## [0.16.0] - 2026-09-08 — A token from any auth collection was a spellcheck token
 
 Security release. 0.15.0 and every earlier version ship the holes this one closes.
@@ -451,6 +516,7 @@ perfect score. Several defaults change: read `### Breaking` before updating.
 - CSV-compatible results
 - TypeScript strict mode, full type exports
 
+[0.17.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.16.0...v0.17.0
 [0.13.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.11.0...v0.13.0
 [0.11.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.10.0...v0.10.1

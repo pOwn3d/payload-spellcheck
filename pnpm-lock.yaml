@@ -9,13 +9,13 @@ importers:
   .:
     dependencies:
       '@payloadcms/next':
-        specifier: ^3.0.0
+        specifier: ^3.79.1
         version: 3.88.0(@types/react@19.2.18)(graphql@16.12.0)(monaco-editor@0.55.1)(next@16.3.4(@types/node@26.4.1)(babel-plugin-macros@3.1.0)(react-dom@19.2.4(react@19.2.8))(react@19.2.8)(sass@1.77.4))(payload@3.88.0(graphql@16.12.0)(typescript@5.9.3))(react-dom@19.2.4(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       '@payloadcms/ui':
-        specifier: ^3.0.0
+        specifier: ^3.79.1
         version: 3.88.0(@types/react@19.2.18)(monaco-editor@0.55.1)(next@16.3.4(@types/node@26.4.1)(babel-plugin-macros@3.1.0)(react-dom@19.2.4(react@19.2.8))(react@19.2.8)(sass@1.77.4))(payload@3.88.0(graphql@16.12.0)(typescript@5.9.3))(react-dom@19.2.4(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       payload:
-        specifier: ^3.0.0
+        specifier: ^3.79.1
         version: 3.88.0(graphql@16.12.0)(typescript@5.9.3)
       react:
         specifier: ^18.0.0 || ^19.0.0

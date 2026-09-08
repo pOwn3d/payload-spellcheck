@@ -101,10 +101,18 @@ yarn add @consilioweb/payload-spellcheck
 
 | Peer dependency | Version | Required |
 |-----------------|---------|----------|
-| `payload` | `^3.0.0` | yes |
-| `@payloadcms/next` | `^3.0.0` | optional — needed for the dashboard view |
-| `@payloadcms/ui` | `^3.0.0` | optional — needed for the admin components |
+| `payload` | `^3.79.1` | yes |
+| `@payloadcms/next` | `^3.79.1` | optional — needed for the dashboard view |
+| `@payloadcms/ui` | `^3.79.1` | optional — needed for the admin components |
 | `react` | `^18.0.0 \|\| ^19.0.0` | optional — needed for the admin components |
+
+> **Why `3.79.1` and not `3.0.0`?** Two reasons. Payload `< 3.79.1` is affected by a
+> pre-authentication account takeover (GHSA-hp5w-3hxx-vmwf) and an SQL injection, and this
+> plugin hands its dashboard view Payload's own `initPageResult` / `DefaultTemplate`, so a
+> vulnerable core is a vulnerable plugin. And the old `^3.0.0` was simply untrue: the dashboard
+> passes `req` to `DefaultTemplate`, a prop that only exists from `@payloadcms/next@3.44`
+> onwards, and it types itself with `AdminViewServerProps`, exported from `payload` only since
+> `3.2x`. Nothing in the plugin uses an API newer than `3.79.1`.
 
 An installer binary is shipped with the package. It adds the plugin call to your plugins file
 (`src/plugins/index.ts`, `src/plugins.ts`, or any file exporting `plugins` as a `Plugin[]`) and
@@ -694,8 +702,11 @@ import { SpellCheckView } from '@consilioweb/payload-spellcheck/views'
 ## Requirements
 
 - **Node.js** — `>= 18`
-- **Payload CMS** — `^3.0.0` (required peer dependency)
-- **`@payloadcms/next`**, **`@payloadcms/ui`** — `^3.0.0`, optional peers, needed by the admin UI
+- **Payload CMS** — `^3.79.1` (required peer dependency — `3.79.1` is the first release free of
+  GHSA-hp5w-3hxx-vmwf, and no API used here is newer than it)
+- **`@payloadcms/next`**, **`@payloadcms/ui`** — `^3.79.1`, optional peers, needed by the admin UI
+  (they ship in lockstep with `payload`; the dashboard needs the `req` prop `DefaultTemplate`
+  gained in `3.44`)
 - **React** — `^18.0.0 || ^19.0.0`, optional peer, needed by the admin UI
 - **Next.js** — 15, or 16 with the Turbopack workaround at the top of this file
 - **Database** — any Payload adapter. `autoFixSchema` only patches SQLite automatically; on other
