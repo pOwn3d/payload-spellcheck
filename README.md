@@ -910,4 +910,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-Made by [ConsilioWEB](https://consilioweb.fr) · [GitHub](https://github.com/pOwn3d)
+Made by [ConsilioWEB](https://consilioweb.fr/services/developpement-web/payload-cms) · [GitHub](https://github.com/pOwn3d)
