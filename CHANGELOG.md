@@ -5,6 +5,27 @@ All notable changes to `@consilioweb/payload-spellcheck` will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.1] - 2026-09-29
+
+Maintenance release. No change to the plugin's runtime code, options or schema: nothing to migrate.
+
+### Changed
+
+- **The README credit links to the page about Payload CMS development.** It pointed to the root
+  of consilioweb.fr; it now points to https://consilioweb.fr/services/developpement-web/payload-cms,
+  the subject of this package.
+- **The build fails on an unresolved relative import in `dist/`.** `scripts/verify-dist-imports.mjs`
+  runs after tsup and stops the build when a relative import in `dist/` targets a file that was
+  never emitted, the defect that made `payload-admin-ui-pro` 0.5.0–0.7.0 and `payload-support`
+  5.0.0–6.0.0 unbuildable in a host application. This package was not affected; the check keeps it
+  that way.
+
+### Development
+
+- Dependabot opens security updates only; routine version bumps are off.
+- pnpm overrides in `pnpm-workspace.yaml` force the patched versions of transitive toolchain
+  dependencies (sass, vitest and the like). None of them reaches a consumer.
+
 ## [0.18.0] - 2026-09-08 — Ten controls with no name, and a badge that could blank a list view
 
 Accessibility, resilience and documentation release. **Nothing here is a security fix** — 0.17.0
@@ -686,6 +707,7 @@ perfect score. Several defaults change: read `### Breaking` before updating.
 - CSV-compatible results
 - TypeScript strict mode, full type exports
 
+[0.18.1]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.16.0...v0.17.0
 [0.13.0]: https://github.com/pOwn3d/payload-spellcheck/compare/v0.11.0...v0.13.0
